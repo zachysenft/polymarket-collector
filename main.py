@@ -3,9 +3,11 @@ import threading
 import time
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from db import init_schema, insert_poly_snapshots
-from btc_collector import BTCPriceCollector, funding_rate_loop
-from poly_collector import snapshot_crypto_markets
+from db import init_schema
+from price_collector import PriceCollector
+from ohlcv_collector import run_backfill_all, collect_all_products, PRODUCTS, GRANULARITIES, GRAN_LABELS
+from indicators import compute_and_store
+from backtester import run_all_backtests
 
 logging.basicConfig(
     level=logging.INFO,
@@ -15,61 +17,77 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-def poly_snapshot_job():
+def ohlcv_5min_job():
     try:
-        rows = snapshot_crypto_markets()
-        insert_poly_snapshots(rows)
+        collect_all_products(300)
     except Exception as e:
-        log.error(f"Polymarket snapshot job failed: {e}")
+        log.error(f"5-min OHLCV job failed: {e}")
 
+
+def ohlcv_1hour_job():
+    try:
+        collect_all_products(3600)
+    except Exception as e:
+        log.error(f"1-hour OHLCV job failed: {e}")
 
 
 def main():
     log.info("=" * 60)
-    log.info("  Polymarket Lag Research Collector — Starting Up")
+    log.info("  Crypto Data Aggregator — Starting Up")
     log.info("=" * 60)
 
-    # Initialize DB schema
+    # 1. Initialize DB schema
     init_schema()
 
-    # ── Thread 1: BTC price via websocket (logs every 60s) ──
-    btc_collector = BTCPriceCollector(log_interval_seconds=60)
+    # 2. Backfill 30 days of historical OHLCV data
+    run_backfill_all(days_back=30)
+
+    # 3. Compute indicators on all backfilled data
+    log.info("Computing indicators on backfilled data...")
+    for gran in GRANULARITIES:
+        gran_label = GRAN_LABELS[gran]
+        for product in PRODUCTS:
+            try:
+                compute_and_store(product, gran_label)
+            except Exception as e:
+                log.error(f"Indicator computation failed for {product} {gran_label}: {e}")
+    log.info("Indicators computed")
+
+    # 4. Run backtests
+    run_all_backtests()
+
+    # 5. Start real-time websocket price feed
+    collector = PriceCollector(log_interval_seconds=60)
     ws_thread = threading.Thread(
-        target=btc_collector.start,
+        target=collector.start,
         daemon=True,
-        name="btc-websocket"
+        name="price-ws"
     )
     ws_thread.start()
-    log.info("BTC websocket thread started")
+    log.info("Price websocket started (BTC/ETH/SOL/XRP)")
 
-    # ── Thread 2: Funding rate every 5 min ──
-    funding_thread = threading.Thread(
-        target=funding_rate_loop,
-        args=(300,),
-        daemon=True,
-        name="funding-rate"
-    )
-    funding_thread.start()
-    log.info("Funding rate thread started")
-
-    # ── Scheduler: Polymarket snapshot every 2 min ──
+    # 6. Schedule ongoing OHLCV collection
     scheduler = BackgroundScheduler()
     scheduler.add_job(
-        poly_snapshot_job,
+        ohlcv_5min_job,
         "interval",
-        minutes=2,
-        id="poly_snapshot",
-        max_instances=1,        # never overlap
-        misfire_grace_time=30
+        minutes=5,
+        id="ohlcv_5min",
+        max_instances=1,
+        misfire_grace_time=60
+    )
+    scheduler.add_job(
+        ohlcv_1hour_job,
+        "interval",
+        hours=1,
+        id="ohlcv_1hour",
+        max_instances=1,
+        misfire_grace_time=120
     )
     scheduler.start()
-    log.info("Polymarket snapshot scheduler started (every 2 min)")
+    log.info("OHLCV collection scheduled (5-min + 1-hour)")
 
-    # Run one snapshot immediately so we don't wait 2 min on startup
-    log.info("Running initial Polymarket snapshot...")
-    poly_snapshot_job()
-
-    log.info("All collectors running. Ctrl+C to stop.")
+    log.info("All systems running. Ctrl+C to stop.")
 
     # Keep main thread alive
     try:
