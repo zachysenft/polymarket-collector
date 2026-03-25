@@ -1,13 +1,11 @@
+import json
 import logging
-import time
 import requests
 from datetime import datetime, timezone
 
 log = logging.getLogger(__name__)
 
-CLOB_BASE  = "https://clob.polymarket.com"
 GAMMA_BASE = "https://gamma-api.polymarket.com"
-
 
 CRYPTO_KEYWORDS = [
     "bitcoin", "btc",
@@ -19,8 +17,8 @@ CRYPTO_KEYWORDS = [
 
 def get_active_crypto_markets():
     """
-    Fetch active BTC/ETH/SOL/XRP markets from Polymarket.
-    Returns list of dicts with market metadata.
+    Fetch active BTC/ETH/SOL/XRP markets from Polymarket Gamma API.
+    Returns list of dicts with market metadata including prices.
     """
     try:
         r = requests.get(
@@ -48,35 +46,27 @@ def get_active_crypto_markets():
         return []
 
 
-def get_market_prices(condition_id):
+def parse_gamma_prices(m):
     """
-    Fetch current yes/no prices for a market from the CLOB.
-    Returns (yes_price, no_price) or (None, None) on error.
+    Extract yes/no prices from Gamma API market data.
+    Gamma returns outcomePrices as a JSON string e.g. '["0.45", "0.55"]'.
+    Returns (yes_price, no_price) or (None, None) if unavailable.
     """
     try:
-        r = requests.get(
-            f"{CLOB_BASE}/markets/{condition_id}",
-            timeout=10
-        )
-        r.raise_for_status()
-        data = r.json()
-
-        tokens = data.get("tokens", [])
-        if len(tokens) < 2:
-            return None, None
-
-        yes_price = float(tokens[0]["price"])
-        no_price  = float(tokens[1]["price"])
-        return yes_price, no_price
-
-    except Exception as e:
-        log.error(f"Error fetching price for {condition_id}: {e}")
-        return None, None
+        raw = m.get("outcomePrices")
+        if raw:
+            prices = json.loads(raw) if isinstance(raw, str) else raw
+            if len(prices) >= 2:
+                return float(prices[0]), float(prices[1])
+    except Exception:
+        pass
+    return None, None
 
 
 def snapshot_crypto_markets():
     """
     Take a full snapshot of all active BTC/ETH/SOL/XRP markets.
+    Prices sourced from Gamma API — no CLOB calls, no rate limiting.
     Returns list of row dicts ready for DB insert.
     """
     markets = get_active_crypto_markets()
@@ -88,9 +78,9 @@ def snapshot_crypto_markets():
         if not condition_id:
             continue
 
-        time.sleep(2.0)  # avoid rate limiting — CLOB is strict
-        yes_price, no_price = get_market_prices(condition_id)
+        yes_price, no_price = parse_gamma_prices(m)
         if yes_price is None:
+            log.warning(f"No price data for market {condition_id[:16]}… — skipping")
             continue
 
         end_date = None
