@@ -5,9 +5,8 @@ from datetime import datetime, timezone
 
 log = logging.getLogger(__name__)
 
-CLOB_BASE   = "https://clob.polymarket.com"
-GAMMA_BASE  = "https://gamma-api.polymarket.com"
-KALSHI_BASE = "https://trading-api.kalshi.com/trade-api/v2"
+CLOB_BASE  = "https://clob.polymarket.com"
+GAMMA_BASE = "https://gamma-api.polymarket.com"
 
 
 CRYPTO_KEYWORDS = [
@@ -89,7 +88,7 @@ def snapshot_crypto_markets():
         if not condition_id:
             continue
 
-        time.sleep(0.5)  # avoid rate limiting
+        time.sleep(2.0)  # avoid rate limiting — CLOB is strict
         yes_price, no_price = get_market_prices(condition_id)
         if yes_price is None:
             continue
@@ -115,90 +114,4 @@ def snapshot_crypto_markets():
         log.debug(f"  {row['question'][:60]} | YES: {yes_price:.3f} | NO: {no_price:.3f}")
 
     log.info(f"Polymarket snapshot: {len(rows)} crypto markets captured")
-    return rows
-
-
-# ── Kalshi ────────────────────────────────────────────────────────────────────
-
-def kalshi_get_active_crypto_markets():
-    """
-    Fetch open BTC/ETH/SOL/XRP markets from Kalshi.
-    Returns list of market dicts.
-    """
-    try:
-        r = requests.get(
-            f"{KALSHI_BASE}/markets",
-            params={
-                "status": "open",
-                "limit":  1000,
-            },
-            timeout=15
-        )
-        r.raise_for_status()
-        data = r.json()
-        markets = data.get("markets", [])
-
-        crypto_markets = [
-            m for m in markets
-            if any(kw in m.get("title", "").lower() for kw in CRYPTO_KEYWORDS)
-        ]
-
-        log.info(f"Kalshi: found {len(crypto_markets)} open crypto markets")
-        return crypto_markets
-
-    except Exception as e:
-        log.error(f"Error fetching Kalshi markets: {e}")
-        return []
-
-
-def snapshot_kalshi_markets():
-    """
-    Take a full snapshot of all open BTC/ETH/SOL/XRP Kalshi markets.
-    Returns list of row dicts ready for DB insert.
-    Kalshi prices are in cents (0–99); converted to 0–1 probability.
-    """
-    markets = kalshi_get_active_crypto_markets()
-    rows = []
-    ts = datetime.now(timezone.utc)
-
-    for m in markets:
-        ticker = m.get("ticker")
-        if not ticker:
-            continue
-
-        yes_bid = m.get("yes_bid")
-        yes_ask = m.get("yes_ask")
-        no_bid  = m.get("no_bid")
-        no_ask  = m.get("no_ask")
-
-        if yes_bid is None or yes_ask is None:
-            continue
-
-        yes_price = (yes_bid + yes_ask) / 2 / 100
-        no_price  = (
-            (no_bid + no_ask) / 2 / 100
-            if (no_bid is not None and no_ask is not None)
-            else round(1 - yes_price, 4)
-        )
-
-        end_date = None
-        if m.get("close_time"):
-            try:
-                end_date = datetime.fromisoformat(m["close_time"].replace("Z", "+00:00"))
-            except Exception:
-                pass
-
-        row = {
-            "ts":        ts,
-            "market_id": ticker,
-            "question":  m.get("title", "")[:500],
-            "yes_price": yes_price,
-            "no_price":  no_price,
-            "volume":    m.get("volume"),
-            "end_date":  end_date,
-        }
-        rows.append(row)
-        log.debug(f"  {row['question'][:60]} | YES: {yes_price:.3f} | NO: {no_price:.3f}")
-
-    log.info(f"Kalshi snapshot: {len(rows)} crypto markets captured")
     return rows
