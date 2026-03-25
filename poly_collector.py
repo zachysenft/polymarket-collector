@@ -19,8 +19,7 @@ def get_active_btc_markets():
             params={
                 "active": "true",
                 "closed": "false",
-                "limit": 50,
-                "tag_slug": "crypto"
+                "limit": 100,
             },
             timeout=15
         )
@@ -30,7 +29,7 @@ def get_active_btc_markets():
         btc_markets = [
             m for m in markets
             if any(kw in m.get("question", "").lower()
-                   for kw in ["bitcoin", "btc"])
+                   for kw in ["bitcoin", "btc", "crypto", "cryptocurrency"])
         ]
 
         log.info(f"Found {len(btc_markets)} active BTC markets")
