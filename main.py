@@ -48,7 +48,7 @@ def main():
         gran_label = GRAN_LABELS[gran]
         for product in PRODUCTS:
             try:
-                compute_and_store(product, gran_label)
+                compute_and_store(product, gran_label, bulk=True)
             except Exception as e:
                 log.error(f"Indicator computation failed for {product} {gran_label}: {e}")
     log.info("Indicators computed")
