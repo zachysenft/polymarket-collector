@@ -1,4 +1,5 @@
 import logging
+import time
 import requests
 from datetime import datetime, timezone
 
@@ -80,6 +81,7 @@ def snapshot_btc_markets():
         if not condition_id:
             continue
 
+        time.sleep(0.5)  # avoid rate limiting
         yes_price, no_price = get_market_prices(condition_id)
         if yes_price is None:
             continue
