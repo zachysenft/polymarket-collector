@@ -1,5 +1,5 @@
 import logging
-import pandas_ta as ta
+import ta
 from db import get_ohlcv_df, upsert_indicators
 
 log = logging.getLogger(__name__)
@@ -14,18 +14,20 @@ def compute_and_store(product, granularity):
         log.warning(f"Not enough data for {product} {granularity} ({len(df)} rows, need 30+)")
         return
 
-    # Compute indicators
-    df["rsi_14"] = ta.rsi(df["close"], length=14)
+    # RSI(14)
+    df["rsi_14"] = ta.momentum.RSIIndicator(df["close"], window=14).rsi()
 
-    macd = ta.macd(df["close"], fast=12, slow=26, signal=9)
-    df["macd"] = macd["MACD_12_26_9"]
-    df["macd_signal"] = macd["MACDs_12_26_9"]
-    df["macd_hist"] = macd["MACDh_12_26_9"]
+    # MACD(12, 26, 9)
+    macd = ta.trend.MACD(df["close"], window_slow=26, window_fast=12, window_sign=9)
+    df["macd"] = macd.macd()
+    df["macd_signal"] = macd.macd_signal()
+    df["macd_hist"] = macd.macd_diff()
 
-    bb = ta.bbands(df["close"], length=20, std=2)
-    df["bb_upper"] = bb["BBU_20_2.0"]
-    df["bb_middle"] = bb["BBM_20_2.0"]
-    df["bb_lower"] = bb["BBL_20_2.0"]
+    # Bollinger Bands(20, 2)
+    bb = ta.volatility.BollingerBands(df["close"], window=20, window_dev=2)
+    df["bb_upper"] = bb.bollinger_hband()
+    df["bb_middle"] = bb.bollinger_mavg()
+    df["bb_lower"] = bb.bollinger_lband()
 
     # Only upsert the most recent 10 rows that have valid indicator values
     valid = df.dropna(subset=["rsi_14", "macd", "bb_upper"]).tail(10)
