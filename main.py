@@ -8,6 +8,7 @@ from price_collector import PriceCollector
 from ohlcv_collector import run_backfill_all, collect_all_products, aggregate_daily_candles, PRODUCTS, GRANULARITIES, GRAN_LABELS
 from indicators import compute_and_store
 from backtester import run_all_backtests, run_param_sweep
+from discord_bot import send_startup_message, send_backtest_summary, send_trade_breakdown, start_discord_listener
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,8 +48,13 @@ def daily_backtest_job():
                     compute_and_store(product, gran_label, bulk=True)
                 except Exception as e:
                     log.error(f"Daily indicator recompute failed for {product} {gran_label}: {e}")
-        run_all_backtests()
-        run_param_sweep()
+        bt_results = run_all_backtests()
+        sweep_results = run_param_sweep()
+        try:
+            send_backtest_summary(bt_results, sweep_results)
+            send_trade_breakdown(bt_results)
+        except Exception as e:
+            log.error(f"Discord notification failed: {e}")
         log.info("Daily backtest complete")
     except Exception as e:
         log.error(f"Daily backtest job failed: {e}")
@@ -58,6 +64,12 @@ def main():
     log.info("=" * 60)
     log.info("  Crypto Data Aggregator — Starting Up")
     log.info("=" * 60)
+
+    # 0. Send Discord startup notification
+    try:
+        send_startup_message()
+    except Exception as e:
+        log.warning(f"Discord startup message failed: {e}")
 
     # 1. Initialize DB schema
     init_schema()
@@ -80,10 +92,17 @@ def main():
     log.info("Indicators computed")
 
     # 5. Run backtests (default params)
-    run_all_backtests()
+    bt_results = run_all_backtests()
 
     # 6. Run parameter sweep (multiple SL/TP/trail configs)
-    run_param_sweep()
+    sweep_results = run_param_sweep()
+
+    # 6b. Send initial backtest results to Discord
+    try:
+        send_backtest_summary(bt_results, sweep_results)
+        send_trade_breakdown(bt_results)
+    except Exception as e:
+        log.error(f"Discord initial backtest notification failed: {e}")
 
     # 7. Start real-time websocket price feed
     collector = PriceCollector(log_interval_seconds=60)
@@ -125,6 +144,12 @@ def main():
     scheduler.start()
     log.info("OHLCV collection scheduled (5-min + 1-hour)")
     log.info("Daily backtest scheduled (06:00 UTC)")
+
+    # 9. Start Discord listener for STOP command
+    try:
+        start_discord_listener()
+    except Exception as e:
+        log.warning(f"Discord listener not started: {e}")
 
     log.info("All systems running. Ctrl+C to stop.")
 
