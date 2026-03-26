@@ -7,7 +7,7 @@ from db import get_full_dataset, insert_backtest_results
 log = logging.getLogger(__name__)
 
 PRODUCTS = ["BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD"]
-GRANULARITIES = ["5min", "1hour"]
+GRANULARITIES = ["5min", "1hour", "1day"]
 
 # Risk management per asset — tightened from v1 (TP/trail were too wide, never triggered)
 RISK_PARAMS = {

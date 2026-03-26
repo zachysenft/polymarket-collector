@@ -5,7 +5,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from db import init_schema
 from price_collector import PriceCollector
-from ohlcv_collector import run_backfill_all, collect_all_products, PRODUCTS, GRANULARITIES, GRAN_LABELS
+from ohlcv_collector import run_backfill_all, collect_all_products, aggregate_daily_candles, PRODUCTS, GRANULARITIES, GRAN_LABELS
 from indicators import compute_and_store
 from backtester import run_all_backtests, run_param_sweep
 
@@ -37,6 +37,8 @@ def daily_backtest_job():
         log.info("=" * 60)
         log.info("  DAILY BACKTEST RE-RUN — using all accumulated data")
         log.info("=" * 60)
+        # Aggregate daily candles from hourly data
+        aggregate_daily_candles()
         # Recompute indicators in bulk so backtests use latest data
         for gran in GRANULARITIES:
             gran_label = GRAN_LABELS[gran]
@@ -63,7 +65,10 @@ def main():
     # 2. Backfill 30 days of historical OHLCV data
     run_backfill_all(days_back=30)
 
-    # 3. Compute indicators on all backfilled data
+    # 3. Aggregate daily candles from hourly data
+    aggregate_daily_candles()
+
+    # 4. Compute indicators on all backfilled data
     log.info("Computing indicators on backfilled data...")
     for gran in GRANULARITIES:
         gran_label = GRAN_LABELS[gran]
@@ -74,13 +79,13 @@ def main():
                 log.error(f"Indicator computation failed for {product} {gran_label}: {e}")
     log.info("Indicators computed")
 
-    # 4. Run backtests (default params)
+    # 5. Run backtests (default params)
     run_all_backtests()
 
-    # 5. Run parameter sweep (multiple SL/TP/trail configs)
+    # 6. Run parameter sweep (multiple SL/TP/trail configs)
     run_param_sweep()
 
-    # 6. Start real-time websocket price feed
+    # 7. Start real-time websocket price feed
     collector = PriceCollector(log_interval_seconds=60)
     ws_thread = threading.Thread(
         target=collector.start,
@@ -90,7 +95,7 @@ def main():
     ws_thread.start()
     log.info("Price websocket started (BTC/ETH/SOL/XRP)")
 
-    # 7. Schedule ongoing OHLCV collection
+    # 8. Schedule ongoing OHLCV collection
     scheduler = BackgroundScheduler()
     scheduler.add_job(
         ohlcv_5min_job,

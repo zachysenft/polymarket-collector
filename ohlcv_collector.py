@@ -3,7 +3,7 @@ import time
 import requests
 from datetime import datetime, timezone, timedelta
 
-from db import upsert_ohlcv, get_latest_ohlcv_ts
+from db import upsert_ohlcv, get_latest_ohlcv_ts, get_ohlcv_df
 from indicators import compute_and_store
 
 log = logging.getLogger(__name__)
@@ -120,3 +120,57 @@ def collect_all_products(granularity_secs):
         time.sleep(0.2)
 
     log.info(f"Collected {gran_label} candles for all products")
+
+
+def aggregate_daily_candles():
+    """
+    Roll up 1-hour candles into 1-day candles.
+    Groups by product + UTC date, computes OHLCV, upserts as granularity='1day'.
+    """
+    import pandas as pd
+
+    for product in PRODUCTS:
+        df = get_ohlcv_df(product, "1hour", limit=10000)
+        if df.empty or len(df) < 24:
+            continue
+
+        df["date"] = pd.to_datetime(df["ts"]).dt.date
+        daily = df.groupby("date").agg(
+            ts=("ts", "first"),
+            open=("open", "first"),
+            high=("high", "max"),
+            low=("low", "min"),
+            close=("close", "last"),
+            volume=("volume", "sum"),
+        ).reset_index(drop=True)
+
+        # Only keep full days (24 hourly candles) except today (partial is fine)
+        hour_counts = df.groupby("date").size()
+        today = datetime.now(timezone.utc).date()
+        full_days = hour_counts[(hour_counts >= 24) | (hour_counts.index == today)].index
+        daily = daily[pd.to_datetime(daily["ts"]).dt.date.isin(full_days)]
+
+        if daily.empty:
+            continue
+
+        rows = []
+        for _, r in daily.iterrows():
+            rows.append({
+                "product":     product,
+                "ts":          r["ts"],
+                "granularity": "1day",
+                "open":        float(r["open"]),
+                "high":        float(r["high"]),
+                "low":         float(r["low"]),
+                "close":       float(r["close"]),
+                "volume":      float(r["volume"]),
+            })
+
+        upsert_ohlcv(rows)
+
+        try:
+            compute_and_store(product, "1day", bulk=True)
+        except Exception as e:
+            log.error(f"Daily indicator computation failed for {product}: {e}")
+
+    log.info(f"Daily candles aggregated for all products")
