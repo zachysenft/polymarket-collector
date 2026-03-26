@@ -7,7 +7,7 @@ from db import init_schema
 from price_collector import PriceCollector
 from ohlcv_collector import run_backfill_all, collect_all_products, PRODUCTS, GRANULARITIES, GRAN_LABELS
 from indicators import compute_and_store
-from backtester import run_all_backtests
+from backtester import run_all_backtests, run_param_sweep
 
 logging.basicConfig(
     level=logging.INFO,
@@ -53,10 +53,13 @@ def main():
                 log.error(f"Indicator computation failed for {product} {gran_label}: {e}")
     log.info("Indicators computed")
 
-    # 4. Run backtests
+    # 4. Run backtests (default params)
     run_all_backtests()
 
-    # 5. Start real-time websocket price feed
+    # 5. Run parameter sweep (multiple SL/TP/trail configs)
+    run_param_sweep()
+
+    # 6. Start real-time websocket price feed
     collector = PriceCollector(log_interval_seconds=60)
     ws_thread = threading.Thread(
         target=collector.start,
@@ -66,7 +69,7 @@ def main():
     ws_thread.start()
     log.info("Price websocket started (BTC/ETH/SOL/XRP)")
 
-    # 6. Schedule ongoing OHLCV collection
+    # 7. Schedule ongoing OHLCV collection
     scheduler = BackgroundScheduler()
     scheduler.add_job(
         ohlcv_5min_job,

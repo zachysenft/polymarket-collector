@@ -66,12 +66,13 @@ def _calc_returns(trades):
     }
 
 
-def _check_risk_exit(row, entry_price, peak_price, product, is_short=False):
+def _check_risk_exit(row, entry_price, peak_price, product, is_short=False, params_override=None):
     """
     Check if SL, TP, or trailing stop should trigger.
     Returns (should_exit, exit_reason) or (False, None).
+    params_override: dict with sl_pct/tp_pct/trail_pct — used by param sweep.
     """
-    params = RISK_PARAMS[product]
+    params = params_override if params_override else RISK_PARAMS[product]
     price = row["close"]
 
     if is_short:
@@ -100,7 +101,7 @@ def _check_risk_exit(row, entry_price, peak_price, product, is_short=False):
     return False, None
 
 
-def strategy_rsi_oversold(df, product):
+def strategy_rsi_oversold(df, product, risk_params=None):
     """Buy when RSI < 30, sell when RSI > 50 (or SL/TP/trail)."""
     trades = []
     in_trade = False
@@ -114,7 +115,7 @@ def strategy_rsi_oversold(df, product):
 
         if in_trade:
             peak_price = max(peak_price, row["close"])
-            should_exit, reason = _check_risk_exit(row, entry_price, peak_price, product)
+            should_exit, reason = _check_risk_exit(row, entry_price, peak_price, product, params_override=risk_params)
             if should_exit:
                 trades.append((entry_price, row["close"], reason))
                 in_trade = False
@@ -130,7 +131,7 @@ def strategy_rsi_oversold(df, product):
     return _calc_returns(trades)
 
 
-def strategy_rsi_overbought(df, product):
+def strategy_rsi_overbought(df, product, risk_params=None):
     """Short when RSI > 70, cover when RSI < 50 (or SL/TP/trail)."""
     trades = []
     in_trade = False
@@ -145,7 +146,7 @@ def strategy_rsi_overbought(df, product):
         if in_trade:
             trough_price = min(trough_price, row["close"])
             should_exit, reason = _check_risk_exit(
-                row, entry_price, trough_price, product, is_short=True)
+                row, entry_price, trough_price, product, is_short=True, params_override=risk_params)
             if should_exit:
                 # Short: profit = entry - exit
                 trades.append((row["close"], entry_price, reason))
@@ -162,7 +163,7 @@ def strategy_rsi_overbought(df, product):
     return _calc_returns(trades)
 
 
-def strategy_macd_crossover(df, product):
+def strategy_macd_crossover(df, product, risk_params=None):
     """Buy on bullish MACD crossover, sell on bearish (or SL/TP/trail)."""
     trades = []
     in_trade = False
@@ -178,7 +179,7 @@ def strategy_macd_crossover(df, product):
 
         if in_trade:
             peak_price = max(peak_price, row["close"])
-            should_exit, reason = _check_risk_exit(row, entry_price, peak_price, product)
+            should_exit, reason = _check_risk_exit(row, entry_price, peak_price, product, params_override=risk_params)
             if should_exit:
                 trades.append((entry_price, row["close"], reason))
                 in_trade = False
@@ -198,7 +199,7 @@ def strategy_macd_crossover(df, product):
     return _calc_returns(trades)
 
 
-def strategy_bb_bounce(df, product):
+def strategy_bb_bounce(df, product, risk_params=None):
     """Buy when price touches lower BB, sell at middle BB (or SL/TP/trail)."""
     trades = []
     in_trade = False
@@ -211,7 +212,7 @@ def strategy_bb_bounce(df, product):
 
         if in_trade:
             peak_price = max(peak_price, row["close"])
-            should_exit, reason = _check_risk_exit(row, entry_price, peak_price, product)
+            should_exit, reason = _check_risk_exit(row, entry_price, peak_price, product, params_override=risk_params)
             if should_exit:
                 trades.append((entry_price, row["close"], reason))
                 in_trade = False
@@ -227,7 +228,7 @@ def strategy_bb_bounce(df, product):
     return _calc_returns(trades)
 
 
-def strategy_bb_squeeze(df, product):
+def strategy_bb_squeeze(df, product, risk_params=None):
     """
     Enter long when BB width contracts to 20-period low then expands.
     Exit when price reaches upper band (or SL/TP/trail).
@@ -253,7 +254,7 @@ def strategy_bb_squeeze(df, product):
 
         if in_trade:
             peak_price = max(peak_price, row["close"])
-            should_exit, reason = _check_risk_exit(row, entry_price, peak_price, product)
+            should_exit, reason = _check_risk_exit(row, entry_price, peak_price, product, params_override=risk_params)
             if should_exit:
                 trades.append((entry_price, row["close"], reason))
                 in_trade = False
@@ -271,7 +272,7 @@ def strategy_bb_squeeze(df, product):
     return _calc_returns(trades)
 
 
-def strategy_multi_indicator(df, product):
+def strategy_multi_indicator(df, product, risk_params=None):
     """
     Loosened combo: enter long when 2 of 3 conditions met:
     (1) RSI < 40, (2) price below lower BB, (3) MACD histogram turning positive.
@@ -292,7 +293,7 @@ def strategy_multi_indicator(df, product):
 
         if in_trade:
             peak_price = max(peak_price, row["close"])
-            should_exit, reason = _check_risk_exit(row, entry_price, peak_price, product)
+            should_exit, reason = _check_risk_exit(row, entry_price, peak_price, product, params_override=risk_params)
             if should_exit:
                 trades.append((entry_price, row["close"], reason))
                 in_trade = False
@@ -316,7 +317,7 @@ def strategy_multi_indicator(df, product):
     return _calc_returns(trades)
 
 
-def strategy_macd_rsi_filtered(df, product):
+def strategy_macd_rsi_filtered(df, product, risk_params=None):
     """
     MACD Crossover filtered by RSI: only enter long on bullish MACD cross
     when RSI is between 30-60 (not overbought). Cuts noise trades.
@@ -336,7 +337,7 @@ def strategy_macd_rsi_filtered(df, product):
 
         if in_trade:
             peak_price = max(peak_price, row["close"])
-            should_exit, reason = _check_risk_exit(row, entry_price, peak_price, product)
+            should_exit, reason = _check_risk_exit(row, entry_price, peak_price, product, params_override=risk_params)
             if should_exit:
                 trades.append((entry_price, row["close"], reason))
                 in_trade = False
@@ -357,7 +358,7 @@ def strategy_macd_rsi_filtered(df, product):
     return _calc_returns(trades)
 
 
-def strategy_rsi_momentum(df, product):
+def strategy_rsi_momentum(df, product, risk_params=None):
     """
     RSI momentum: enter long when RSI crosses above 50 from below (trend starting).
     Exit when RSI drops below 45 (or SL/TP/trail).
@@ -376,7 +377,7 @@ def strategy_rsi_momentum(df, product):
 
         if in_trade:
             peak_price = max(peak_price, row["close"])
-            should_exit, reason = _check_risk_exit(row, entry_price, peak_price, product)
+            should_exit, reason = _check_risk_exit(row, entry_price, peak_price, product, params_override=risk_params)
             if should_exit:
                 trades.append((entry_price, row["close"], reason))
                 in_trade = False
@@ -395,7 +396,7 @@ def strategy_rsi_momentum(df, product):
     return _calc_returns(trades)
 
 
-def strategy_bb_mean_revert_short(df, product):
+def strategy_bb_mean_revert_short(df, product, risk_params=None):
     """
     Short when price touches upper BB, cover at middle BB.
     Mirror of BB Bounce but for shorts.
@@ -412,7 +413,7 @@ def strategy_bb_mean_revert_short(df, product):
         if in_trade:
             trough_price = min(trough_price, row["close"])
             should_exit, reason = _check_risk_exit(
-                row, entry_price, trough_price, product, is_short=True)
+                row, entry_price, trough_price, product, is_short=True, params_override=risk_params)
             if should_exit:
                 trades.append((row["close"], entry_price, reason))
                 in_trade = False
@@ -505,6 +506,112 @@ def run_all_backtests():
         log.info("")
         log.info("  No strategies were profitable after fees + risk management.")
         log.info("  This is normal — most naive strategies don't survive realistic costs.")
+    log.info("")
+
+    return all_results
+
+
+# --- Parameter Sweep ---
+# Grid of SL/TP/trail combos to test (pct as decimals).
+# Labels are shorthand for logs: "tight", "default", "wide", "xwide"
+PARAM_GRID = [
+    {"label": "tight",   "sl_pct": 0.01,  "tp_pct": 0.015, "trail_pct": 0.01},
+    {"label": "default", "sl_pct": 0.02,  "tp_pct": 0.025, "trail_pct": 0.015},
+    {"label": "mid",     "sl_pct": 0.03,  "tp_pct": 0.04,  "trail_pct": 0.025},
+    {"label": "wide",    "sl_pct": 0.04,  "tp_pct": 0.06,  "trail_pct": 0.04},
+    {"label": "xwide",   "sl_pct": 0.06,  "tp_pct": 0.10,  "trail_pct": 0.06},
+]
+
+# Only sweep the top-performing strategies to keep runtime reasonable
+SWEEP_STRATEGIES = {
+    "MACD Crossover":        strategy_macd_crossover,
+    "MACD+RSI Filtered":     strategy_macd_rsi_filtered,
+    "BB Bounce":             strategy_bb_bounce,
+    "BB Squeeze Breakout":   strategy_bb_squeeze,
+    "RSI Momentum":          strategy_rsi_momentum,
+    "Multi-Indicator Combo": strategy_multi_indicator,
+}
+
+
+def run_param_sweep():
+    """Test each strategy with multiple SL/TP/trail configurations. Log best per combo."""
+    run_ts = datetime.now(timezone.utc)
+    all_results = []
+
+    log.info("")
+    log.info("=" * 70)
+    log.info("  PARAMETER SWEEP — testing %d risk configs × %d strategies",
+             len(PARAM_GRID), len(SWEEP_STRATEGIES))
+    log.info("=" * 70)
+
+    for gran in GRANULARITIES:
+        for product in PRODUCTS:
+            df = get_full_dataset(product, gran)
+            if df.empty or len(df) < 30:
+                continue
+
+            for name, func in SWEEP_STRATEGIES.items():
+                for pg in PARAM_GRID:
+                    params = {
+                        "sl_pct": pg["sl_pct"],
+                        "tp_pct": pg["tp_pct"],
+                        "trail_pct": pg["trail_pct"],
+                    }
+                    result = func(df, product, risk_params=params)
+                    label = pg["label"]
+                    strat_label = f"{name} [{label}]"
+                    result["run_ts"] = run_ts
+                    result["product"] = product
+                    result["granularity"] = gran
+                    result["strategy"] = strat_label
+                    all_results.append(result)
+
+    # Store all sweep results
+    if all_results:
+        insert_backtest_results(all_results)
+        log.info(f"Stored {len(all_results)} sweep results to DB")
+
+    # Find best param set per strategy+product+granularity
+    from collections import defaultdict
+    best = defaultdict(lambda: None)
+    for r in all_results:
+        if r["trades"] == 0:
+            continue
+        # Key by base strategy name (strip param label)
+        base = r["strategy"].split(" [")[0]
+        key = (base, r["product"], r["granularity"])
+        if best[key] is None or r["total_return"] > best[key]["total_return"]:
+            best[key] = r
+
+    winners = [v for v in best.values() if v and v["total_return"] > 0]
+    winners.sort(key=lambda x: x["total_return"], reverse=True)
+
+    log.info("")
+    log.info("  BEST PARAM SET PER STRATEGY (top 10):")
+    for r in winners[:10]:
+        log.info(
+            f"    {r['product']:8s} {r['granularity']:5s} {r['strategy']:40s} "
+            f"→ {r['total_return']:+.3f}%  ({r['trades']} trades, "
+            f"{r['win_rate']:.0f}% win, maxDD={r['max_drawdown']:.2f}%)"
+        )
+
+    if not winners:
+        log.info("  No profitable param configurations found.")
+
+    # Also show which param label wins most often
+    label_wins = defaultdict(int)
+    for v in best.values():
+        if v and v["total_return"] > 0:
+            label = v["strategy"].split("[")[1].rstrip("]")
+            label_wins[label] += 1
+
+    if label_wins:
+        log.info("")
+        log.info("  PARAM LABEL WIN COUNT (how often each config is best):")
+        for label, count in sorted(label_wins.items(), key=lambda x: -x[1]):
+            log.info(f"    {label:10s}: {count} wins")
+
+    log.info("=" * 70)
     log.info("")
 
     return all_results

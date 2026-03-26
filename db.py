@@ -1,9 +1,12 @@
 import os
 import logging
+import warnings
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
 from datetime import datetime, timezone
+
+warnings.filterwarnings("ignore", message=".*pandas only supports SQLAlchemy.*")
 
 log = logging.getLogger(__name__)
 
