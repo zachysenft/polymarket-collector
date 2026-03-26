@@ -219,6 +219,107 @@ def send_trade_breakdown(bt_results):
     log.info("Trade breakdown sent to Discord")
 
 
+def send_shadow_checkin():
+    """Send 4x daily shadow trading status update."""
+    if not BOT_TOKEN and not WEBHOOK_URL:
+        return
+
+    from db import (get_open_shadow_trades, get_closed_shadow_trades_since,
+                    get_all_closed_shadow_trades, get_shadow_balance, get_latest_prices)
+    from datetime import timedelta
+
+    balance = get_shadow_balance()
+    all_closed = get_all_closed_shadow_trades()
+    open_positions = get_open_shadow_trades()
+
+    # Calculate realized P&L and win/loss
+    total_pnl = sum(float(t["pnl_dollars"]) for t in all_closed)
+    wins = sum(1 for t in all_closed if float(t["pnl_dollars"]) > 0)
+    losses = sum(1 for t in all_closed if float(t["pnl_dollars"]) <= 0)
+
+    # Determine shadow mode start day
+    first_trade_ts = None
+    if all_closed:
+        first_trade_ts = all_closed[0].get("entry_ts")
+    if open_positions and not first_trade_ts:
+        first_trade_ts = open_positions[0].get("entry_ts")
+
+    days_running = 0
+    if first_trade_ts:
+        if hasattr(first_trade_ts, 'date'):
+            days_running = (datetime.now(timezone.utc) - first_trade_ts).days
+        else:
+            days_running = 0
+
+    color = 0x3498DB if total_pnl >= 0 else 0xFF0000
+    embed = discord.Embed(
+        title="Shadow Trading Check-In",
+        description=(
+            f"**Balance:** ${balance:.2f} | "
+            f"**Realized P&L:** ${total_pnl:+.2f} | "
+            f"**W/L:** {wins}/{losses}"
+        ),
+        color=color,
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    # Open positions with current prices
+    if open_positions:
+        products = list(set(p["product"] for p in open_positions))
+        current_prices = get_latest_prices(products)
+        lines = []
+        for pos in open_positions:
+            curr_price = current_prices.get(pos["product"], float(pos["entry_price"]))
+            entry_p = float(pos["entry_price"])
+            size = float(pos["position_size"])
+            unrealized_pct = (curr_price - entry_p) / entry_p
+            unrealized_dollars = size * unrealized_pct
+            lines.append(
+                f"**{pos['strategy']}** | {pos['product']} {pos['side']} @ ${entry_p:,.2f}\n"
+                f"  Now: ${curr_price:,.2f} | ${unrealized_dollars:+.2f} ({unrealized_pct*100:+.2f}%)"
+            )
+        embed.add_field(name=f"Open Positions ({len(open_positions)})",
+                        value="\n".join(lines), inline=False)
+    else:
+        embed.add_field(name="Open Positions", value="None", inline=False)
+
+    # Closed since last check-in (6 hours ago)
+    since_ts = datetime.now(timezone.utc) - timedelta(hours=6)
+    recent_closed = get_closed_shadow_trades_since(since_ts)
+    if recent_closed:
+        lines = []
+        for t in recent_closed:
+            lines.append(
+                f"**{t['strategy']}** | {t['exit_reason']} @ ${float(t['exit_price']):,.2f} | "
+                f"${float(t['pnl_dollars']):+.2f} ({float(t['pnl_pct']):+.2f}%)"
+            )
+        embed.add_field(name=f"Closed Since Last Check-In ({len(recent_closed)})",
+                        value="\n".join(lines), inline=False)
+
+    # Per-strategy cumulative stats
+    strat_stats = defaultdict(lambda: {"wins": 0, "losses": 0, "pnl": 0})
+    for t in all_closed:
+        s = strat_stats[t["strategy"]]
+        pnl = float(t["pnl_dollars"])
+        if pnl > 0:
+            s["wins"] += 1
+        else:
+            s["losses"] += 1
+        s["pnl"] += pnl
+
+    if strat_stats:
+        lines = []
+        for name, s in strat_stats.items():
+            lines.append(f"**{name}**: {s['wins']}W/{s['losses']}L  ${s['pnl']:+.2f}")
+        embed.add_field(name="Per-Strategy Stats", value="\n".join(lines), inline=False)
+
+    footer = f"Shadow mode day {days_running}/30 | Go-live trigger: 1 month profitable"
+    embed.set_footer(text=footer)
+
+    _send_embed_sync([embed])
+    log.info("Shadow check-in sent to Discord")
+
+
 def start_discord_listener():
     """Start a persistent Discord bot that listens for STOP command."""
     if not BOT_TOKEN or not CHANNEL_ID:

@@ -8,7 +8,8 @@ from price_collector import PriceCollector
 from ohlcv_collector import run_backfill_all, collect_all_products, aggregate_daily_candles, PRODUCTS, GRANULARITIES, GRAN_LABELS
 from indicators import compute_and_store
 from backtester import run_all_backtests, run_param_sweep
-from discord_bot import send_startup_message, send_backtest_summary, send_trade_breakdown, start_discord_listener
+from discord_bot import send_startup_message, send_backtest_summary, send_trade_breakdown, send_shadow_checkin, start_discord_listener
+from shadow_trader import evaluate_shadow_trades
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,6 +31,17 @@ def ohlcv_1hour_job():
         collect_all_products(3600)
     except Exception as e:
         log.error(f"1-hour OHLCV job failed: {e}")
+    try:
+        evaluate_shadow_trades()
+    except Exception as e:
+        log.error(f"Shadow trade evaluation failed: {e}")
+
+
+def shadow_checkin_job():
+    try:
+        send_shadow_checkin()
+    except Exception as e:
+        log.error(f"Shadow check-in failed: {e}")
 
 
 def daily_backtest_job():
@@ -141,9 +153,21 @@ def main():
         max_instances=1,
         misfire_grace_time=3600
     )
+    # Shadow trading check-ins: 8am/12pm/4pm/8pm ET = UTC 12/16/20/00
+    for hour in [12, 16, 20, 0]:
+        scheduler.add_job(
+            shadow_checkin_job,
+            "cron",
+            hour=hour,
+            minute=0,
+            id=f"shadow_checkin_{hour}",
+            max_instances=1,
+            misfire_grace_time=300,
+        )
     scheduler.start()
     log.info("OHLCV collection scheduled (5-min + 1-hour)")
     log.info("Daily backtest scheduled (06:00 UTC)")
+    log.info("Shadow check-ins scheduled (8am/12pm/4pm/8pm ET)")
 
     # 9. Start Discord listener for STOP command
     try:
