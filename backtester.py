@@ -9,12 +9,12 @@ log = logging.getLogger(__name__)
 PRODUCTS = ["BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD"]
 GRANULARITIES = ["5min", "1hour"]
 
-# Risk management per asset (based on volatility research)
+# Risk management per asset — tightened from v1 (TP/trail were too wide, never triggered)
 RISK_PARAMS = {
-    "BTC-USD": {"sl_pct": 0.03, "tp_pct": 0.06, "trail_pct": 0.05},
-    "ETH-USD": {"sl_pct": 0.04, "tp_pct": 0.08, "trail_pct": 0.05},
-    "SOL-USD": {"sl_pct": 0.05, "tp_pct": 0.10, "trail_pct": 0.06},
-    "XRP-USD": {"sl_pct": 0.05, "tp_pct": 0.10, "trail_pct": 0.06},
+    "BTC-USD": {"sl_pct": 0.02, "tp_pct": 0.025, "trail_pct": 0.015},
+    "ETH-USD": {"sl_pct": 0.025, "tp_pct": 0.03, "trail_pct": 0.02},
+    "SOL-USD": {"sl_pct": 0.03, "tp_pct": 0.04, "trail_pct": 0.025},
+    "XRP-USD": {"sl_pct": 0.03, "tp_pct": 0.04, "trail_pct": 0.025},
 }
 
 # Binance.US Tier 0 fees: 0.00% maker + 0.01% taker on BTC/ETH/SOL/USD pairs
@@ -273,9 +273,9 @@ def strategy_bb_squeeze(df, product):
 
 def strategy_multi_indicator(df, product):
     """
-    High-conviction long: RSI < 35 AND price below lower BB
-    AND MACD histogram turning positive.
-    Exit when RSI > 55 (or SL/TP/trail).
+    Loosened combo: enter long when 2 of 3 conditions met:
+    (1) RSI < 40, (2) price below lower BB, (3) MACD histogram turning positive.
+    Exit when RSI > 55 or MACD crosses bearish (or SL/TP/trail).
     """
     trades = []
     in_trade = False
@@ -302,8 +302,11 @@ def strategy_multi_indicator(df, product):
                 trades.append((entry_price, row["close"], "signal"))
                 in_trade = False
         else:
-            hist_turning = (prev_hist is not None and prev_hist < 0 and hist > prev_hist)
-            if rsi < 35 and row["close"] < row["bb_lower"] and hist_turning:
+            cond_rsi = rsi < 40
+            cond_bb = row["close"] < row["bb_lower"]
+            cond_macd = (prev_hist is not None and prev_hist < 0 and hist > prev_hist)
+            signals = sum([cond_rsi, cond_bb, cond_macd])
+            if signals >= 2:
                 entry_price = row["close"]
                 peak_price = row["close"]
                 in_trade = True
@@ -313,12 +316,127 @@ def strategy_multi_indicator(df, product):
     return _calc_returns(trades)
 
 
+def strategy_macd_rsi_filtered(df, product):
+    """
+    MACD Crossover filtered by RSI: only enter long on bullish MACD cross
+    when RSI is between 30-60 (not overbought). Cuts noise trades.
+    """
+    trades = []
+    in_trade = False
+    entry_price = 0
+    peak_price = 0
+    prev_hist = None
+
+    for _, row in df.iterrows():
+        hist = row["macd_hist"]
+        rsi = row["rsi_14"]
+        if pd.isna(hist) or pd.isna(rsi):
+            prev_hist = None
+            continue
+
+        if in_trade:
+            peak_price = max(peak_price, row["close"])
+            should_exit, reason = _check_risk_exit(row, entry_price, peak_price, product)
+            if should_exit:
+                trades.append((entry_price, row["close"], reason))
+                in_trade = False
+                prev_hist = hist
+                continue
+            if prev_hist is not None and prev_hist >= 0 and hist < 0:
+                trades.append((entry_price, row["close"], "signal"))
+                in_trade = False
+
+        elif prev_hist is not None and prev_hist <= 0 and hist > 0:
+            if 30 <= rsi <= 60:
+                entry_price = row["close"]
+                peak_price = row["close"]
+                in_trade = True
+
+        prev_hist = hist
+
+    return _calc_returns(trades)
+
+
+def strategy_rsi_momentum(df, product):
+    """
+    RSI momentum: enter long when RSI crosses above 50 from below (trend starting).
+    Exit when RSI drops below 45 (or SL/TP/trail).
+    """
+    trades = []
+    in_trade = False
+    entry_price = 0
+    peak_price = 0
+    prev_rsi = None
+
+    for _, row in df.iterrows():
+        rsi = row["rsi_14"]
+        if pd.isna(rsi):
+            prev_rsi = None
+            continue
+
+        if in_trade:
+            peak_price = max(peak_price, row["close"])
+            should_exit, reason = _check_risk_exit(row, entry_price, peak_price, product)
+            if should_exit:
+                trades.append((entry_price, row["close"], reason))
+                in_trade = False
+                prev_rsi = rsi
+                continue
+            if rsi < 45:
+                trades.append((entry_price, row["close"], "signal"))
+                in_trade = False
+        elif prev_rsi is not None and prev_rsi < 50 and rsi >= 50:
+            entry_price = row["close"]
+            peak_price = row["close"]
+            in_trade = True
+
+        prev_rsi = rsi
+
+    return _calc_returns(trades)
+
+
+def strategy_bb_mean_revert_short(df, product):
+    """
+    Short when price touches upper BB, cover at middle BB.
+    Mirror of BB Bounce but for shorts.
+    """
+    trades = []
+    in_trade = False
+    entry_price = 0
+    trough_price = 0
+
+    for _, row in df.iterrows():
+        if pd.isna(row["bb_upper"]) or pd.isna(row["bb_middle"]):
+            continue
+
+        if in_trade:
+            trough_price = min(trough_price, row["close"])
+            should_exit, reason = _check_risk_exit(
+                row, entry_price, trough_price, product, is_short=True)
+            if should_exit:
+                trades.append((row["close"], entry_price, reason))
+                in_trade = False
+                continue
+            if row["close"] <= row["bb_middle"]:
+                trades.append((row["close"], entry_price, "signal"))
+                in_trade = False
+        elif row["close"] >= row["bb_upper"]:
+            entry_price = row["close"]
+            trough_price = row["close"]
+            in_trade = True
+
+    return _calc_returns(trades)
+
+
 STRATEGIES = {
-    "RSI Oversold Buy":     strategy_rsi_oversold,
-    "RSI Overbought Short": strategy_rsi_overbought,
-    "MACD Crossover":       strategy_macd_crossover,
-    "BB Bounce":            strategy_bb_bounce,
-    "BB Squeeze Breakout":  strategy_bb_squeeze,
+    "RSI Oversold Buy":      strategy_rsi_oversold,
+    "RSI Overbought Short":  strategy_rsi_overbought,
+    "RSI Momentum":          strategy_rsi_momentum,
+    "MACD Crossover":        strategy_macd_crossover,
+    "MACD+RSI Filtered":     strategy_macd_rsi_filtered,
+    "BB Bounce":             strategy_bb_bounce,
+    "BB Mean Revert Short":  strategy_bb_mean_revert_short,
+    "BB Squeeze Breakout":   strategy_bb_squeeze,
     "Multi-Indicator Combo": strategy_multi_indicator,
 }
 
@@ -330,8 +448,8 @@ def run_all_backtests():
 
     log.info("=" * 70)
     log.info("  BACKTEST RESULTS (with SL/TP/trailing stop, fees=0.02%%)")
-    log.info("  SL: BTC 3%%, ETH 4%%, SOL/XRP 5%%  |  TP: 2:1 ratio")
-    log.info("  Trailing stop: 5-6%% from peak  |  Fees: 0.02%% round trip (Binance.US)")
+    log.info("  SL: BTC 2%%, ETH 2.5%%, SOL/XRP 3%%  |  TP: BTC 2.5%%, ETH 3%%, SOL/XRP 4%%")
+    log.info("  Trailing stop: 1.5-2.5%% from peak  |  Fees: 0.02%% round trip (Binance.US)")
     log.info("=" * 70)
 
     for gran in GRANULARITIES:
