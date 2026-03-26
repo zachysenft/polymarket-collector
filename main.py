@@ -31,6 +31,27 @@ def ohlcv_1hour_job():
         log.error(f"1-hour OHLCV job failed: {e}")
 
 
+def daily_backtest_job():
+    """Re-run all backtests + param sweep with accumulated data. Runs once per day."""
+    try:
+        log.info("=" * 60)
+        log.info("  DAILY BACKTEST RE-RUN — using all accumulated data")
+        log.info("=" * 60)
+        # Recompute indicators in bulk so backtests use latest data
+        for gran in GRANULARITIES:
+            gran_label = GRAN_LABELS[gran]
+            for product in PRODUCTS:
+                try:
+                    compute_and_store(product, gran_label, bulk=True)
+                except Exception as e:
+                    log.error(f"Daily indicator recompute failed for {product} {gran_label}: {e}")
+        run_all_backtests()
+        run_param_sweep()
+        log.info("Daily backtest complete")
+    except Exception as e:
+        log.error(f"Daily backtest job failed: {e}")
+
+
 def main():
     log.info("=" * 60)
     log.info("  Crypto Data Aggregator — Starting Up")
@@ -87,8 +108,18 @@ def main():
         max_instances=1,
         misfire_grace_time=120
     )
+    scheduler.add_job(
+        daily_backtest_job,
+        "cron",
+        hour=6,
+        minute=0,
+        id="daily_backtest",
+        max_instances=1,
+        misfire_grace_time=3600
+    )
     scheduler.start()
     log.info("OHLCV collection scheduled (5-min + 1-hour)")
+    log.info("Daily backtest scheduled (06:00 UTC)")
 
     log.info("All systems running. Ctrl+C to stop.")
 

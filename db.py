@@ -43,6 +43,13 @@ CREATE TABLE IF NOT EXISTS indicators (
     bb_upper    NUMERIC(14,4),
     bb_middle   NUMERIC(14,4),
     bb_lower    NUMERIC(14,4),
+    ema_50      NUMERIC(14,4),
+    ema_200     NUMERIC(14,4),
+    atr_14      NUMERIC(14,6),
+    adx_14      NUMERIC(8,4),
+    obv         NUMERIC(20,2),
+    stoch_rsi   NUMERIC(8,4),
+    vwap        NUMERIC(14,4),
     UNIQUE (product, ts, granularity)
 );
 
@@ -62,6 +69,17 @@ CREATE TABLE IF NOT EXISTS backtest_results (
 CREATE INDEX IF NOT EXISTS idx_tick_product_ts ON price_tick_log(product, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_ohlcv_lookup ON ohlcv(product, granularity, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_indicators_lookup ON indicators(product, granularity, ts DESC);
+
+-- Add new indicator columns (safe to re-run, errors ignored in init_schema)
+DO $$ BEGIN
+    ALTER TABLE indicators ADD COLUMN IF NOT EXISTS ema_50 NUMERIC(14,4);
+    ALTER TABLE indicators ADD COLUMN IF NOT EXISTS ema_200 NUMERIC(14,4);
+    ALTER TABLE indicators ADD COLUMN IF NOT EXISTS atr_14 NUMERIC(14,6);
+    ALTER TABLE indicators ADD COLUMN IF NOT EXISTS adx_14 NUMERIC(8,4);
+    ALTER TABLE indicators ADD COLUMN IF NOT EXISTS obv NUMERIC(20,2);
+    ALTER TABLE indicators ADD COLUMN IF NOT EXISTS stoch_rsi NUMERIC(8,4);
+    ALTER TABLE indicators ADD COLUMN IF NOT EXISTS vwap NUMERIC(14,4);
+END $$;
 """
 
 
@@ -119,17 +137,24 @@ def upsert_indicators(rows):
     execute_values(cur, """
         INSERT INTO indicators
             (product, ts, granularity, rsi_14, macd, macd_signal, macd_hist,
-             bb_upper, bb_middle, bb_lower)
+             bb_upper, bb_middle, bb_lower,
+             ema_50, ema_200, atr_14, adx_14, obv, stoch_rsi, vwap)
         VALUES %s
         ON CONFLICT (product, ts, granularity)
         DO UPDATE SET rsi_14=EXCLUDED.rsi_14, macd=EXCLUDED.macd,
                       macd_signal=EXCLUDED.macd_signal, macd_hist=EXCLUDED.macd_hist,
                       bb_upper=EXCLUDED.bb_upper, bb_middle=EXCLUDED.bb_middle,
-                      bb_lower=EXCLUDED.bb_lower
+                      bb_lower=EXCLUDED.bb_lower,
+                      ema_50=EXCLUDED.ema_50, ema_200=EXCLUDED.ema_200,
+                      atr_14=EXCLUDED.atr_14, adx_14=EXCLUDED.adx_14,
+                      obv=EXCLUDED.obv, stoch_rsi=EXCLUDED.stoch_rsi,
+                      vwap=EXCLUDED.vwap
     """, [(
         r["product"], r["ts"], r["granularity"],
         r.get("rsi_14"), r.get("macd"), r.get("macd_signal"), r.get("macd_hist"),
-        r.get("bb_upper"), r.get("bb_middle"), r.get("bb_lower")
+        r.get("bb_upper"), r.get("bb_middle"), r.get("bb_lower"),
+        r.get("ema_50"), r.get("ema_200"), r.get("atr_14"), r.get("adx_14"),
+        r.get("obv"), r.get("stoch_rsi"), r.get("vwap")
     ) for r in rows])
     conn.commit()
     cur.close()
@@ -192,7 +217,9 @@ def get_full_dataset(product, granularity):
     df = pd.read_sql_query("""
         SELECT o.ts, o.open, o.high, o.low, o.close, o.volume,
                i.rsi_14, i.macd, i.macd_signal, i.macd_hist,
-               i.bb_upper, i.bb_middle, i.bb_lower
+               i.bb_upper, i.bb_middle, i.bb_lower,
+               i.ema_50, i.ema_200, i.atr_14, i.adx_14,
+               i.obv, i.stoch_rsi, i.vwap
         FROM ohlcv o
         LEFT JOIN indicators i
             ON o.product = i.product AND o.ts = i.ts AND o.granularity = i.granularity
@@ -204,7 +231,9 @@ def get_full_dataset(product, granularity):
         return df
     for col in ["open", "high", "low", "close", "volume",
                 "rsi_14", "macd", "macd_signal", "macd_hist",
-                "bb_upper", "bb_middle", "bb_lower"]:
+                "bb_upper", "bb_middle", "bb_lower",
+                "ema_50", "ema_200", "atr_14", "adx_14",
+                "obv", "stoch_rsi", "vwap"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
