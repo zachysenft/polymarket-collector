@@ -17,8 +17,8 @@ RISK_PARAMS = {
     "XRP-USD": {"sl_pct": 0.05, "tp_pct": 0.10, "trail_pct": 0.06},
 }
 
-# Coinbase fees: 0.60% maker + 1.20% taker at lowest volume tier
-ROUND_TRIP_FEE = 0.018  # 1.8% total for entry + exit
+# Binance.US Tier 0 fees: 0.00% maker + 0.01% taker on BTC/ETH/SOL/USD pairs
+ROUND_TRIP_FEE = 0.0002  # 0.02% total (limit entry + market exit worst case)
 
 
 def _calc_returns(trades):
@@ -329,9 +329,9 @@ def run_all_backtests():
     all_results = []
 
     log.info("=" * 70)
-    log.info("  BACKTEST RESULTS (with SL/TP/trailing stop, fees=1.8%%)")
+    log.info("  BACKTEST RESULTS (with SL/TP/trailing stop, fees=0.02%%)")
     log.info("  SL: BTC 3%%, ETH 4%%, SOL/XRP 5%%  |  TP: 2:1 ratio")
-    log.info("  Trailing stop: 5-6%% from peak  |  Fees: 1.8%% round trip")
+    log.info("  Trailing stop: 5-6%% from peak  |  Fees: 0.02%% round trip (Binance.US)")
     log.info("=" * 70)
 
     for gran in GRANULARITIES:
