@@ -225,12 +225,16 @@ def send_shadow_checkin():
         return
 
     from db import (get_open_shadow_trades, get_closed_shadow_trades_since,
-                    get_all_closed_shadow_trades, get_shadow_balance, get_latest_prices)
+                    get_all_closed_shadow_trades, get_all_strategy_balances, get_latest_prices)
     from datetime import timedelta
 
-    balance = get_shadow_balance()
+    strategy_balances = get_all_strategy_balances()
     all_closed = get_all_closed_shadow_trades()
     open_positions = get_open_shadow_trades()
+
+    total_balance = sum(strategy_balances.values()) if strategy_balances else 0
+    num_strategies = len(strategy_balances) if strategy_balances else 0
+    initial_total = 100.0 * num_strategies
 
     # Calculate realized P&L and win/loss
     total_pnl = sum(float(t["pnl_dollars"]) for t in all_closed)
@@ -245,17 +249,14 @@ def send_shadow_checkin():
         first_trade_ts = open_positions[0].get("entry_ts")
 
     days_running = 0
-    if first_trade_ts:
-        if hasattr(first_trade_ts, 'date'):
-            days_running = (datetime.now(timezone.utc) - first_trade_ts).days
-        else:
-            days_running = 0
+    if first_trade_ts and hasattr(first_trade_ts, 'date'):
+        days_running = (datetime.now(timezone.utc) - first_trade_ts).days
 
     color = 0x3498DB if total_pnl >= 0 else 0xFF0000
     embed = discord.Embed(
         title="Shadow Trading Check-In",
         description=(
-            f"**Balance:** ${balance:.2f} | "
+            f"**Total Balance:** ${total_balance:.2f} (${initial_total:.0f} across {num_strategies} strategies) | "
             f"**Realized P&L:** ${total_pnl:+.2f} | "
             f"**W/L:** {wins}/{losses}"
         ),
@@ -296,7 +297,7 @@ def send_shadow_checkin():
         embed.add_field(name=f"Closed Since Last Check-In ({len(recent_closed)})",
                         value="\n".join(lines), inline=False)
 
-    # Per-strategy cumulative stats
+    # Per-strategy stats (balance + cumulative P&L)
     strat_stats = defaultdict(lambda: {"wins": 0, "losses": 0, "pnl": 0})
     for t in all_closed:
         s = strat_stats[t["strategy"]]
@@ -307,17 +308,84 @@ def send_shadow_checkin():
             s["losses"] += 1
         s["pnl"] += pnl
 
-    if strat_stats:
+    if strategy_balances:
         lines = []
-        for name, s in strat_stats.items():
-            lines.append(f"**{name}**: {s['wins']}W/{s['losses']}L  ${s['pnl']:+.2f}")
-        embed.add_field(name="Per-Strategy Stats", value="\n".join(lines), inline=False)
+        for name, bal in sorted(strategy_balances.items()):
+            s = strat_stats.get(name, {"wins": 0, "losses": 0, "pnl": 0})
+            lines.append(
+                f"**{name}**: ${bal:.2f} | {s['wins']}W/{s['losses']}L  ${s['pnl']:+.2f}"
+            )
+        embed.add_field(name="Per-Strategy Balance & Stats", value="\n".join(lines), inline=False)
 
     footer = f"Shadow mode day {days_running}/30 | Go-live trigger: 1 month profitable"
     embed.set_footer(text=footer)
 
     _send_embed_sync([embed])
     log.info("Shadow check-in sent to Discord")
+
+
+def send_weekly_report():
+    """Send Sunday weekly shadow trading performance summary."""
+    if not BOT_TOKEN and not WEBHOOK_URL:
+        return
+
+    from db import (get_closed_shadow_trades_since, get_all_closed_shadow_trades,
+                    get_all_strategy_balances)
+    from datetime import timedelta
+
+    strategy_balances = get_all_strategy_balances()
+    since_ts = datetime.now(timezone.utc) - timedelta(days=7)
+    weekly_trades = get_closed_shadow_trades_since(since_ts)
+    all_closed = get_all_closed_shadow_trades()
+
+    total_balance = sum(strategy_balances.values()) if strategy_balances else 0
+    num_strategies = len(strategy_balances) if strategy_balances else 0
+    initial_total = 100.0 * num_strategies
+
+    weekly_pnl = sum(float(t["pnl_dollars"]) for t in weekly_trades)
+    weekly_wins = sum(1 for t in weekly_trades if float(t["pnl_dollars"]) > 0)
+    weekly_losses = sum(1 for t in weekly_trades if float(t["pnl_dollars"]) <= 0)
+    all_time_pnl = sum(float(t["pnl_dollars"]) for t in all_closed)
+
+    color = 0x00FF00 if weekly_pnl >= 0 else 0xFF0000
+    embed = discord.Embed(
+        title="Weekly Shadow Trading Report",
+        description=(
+            f"**Total Balance:** ${total_balance:.2f} / ${initial_total:.0f} started\n"
+            f"**Week P&L:** ${weekly_pnl:+.2f} ({len(weekly_trades)} trades, {weekly_wins}W/{weekly_losses}L) | "
+            f"**All-Time P&L:** ${all_time_pnl:+.2f}"
+        ),
+        color=color,
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    # Per-strategy balances
+    if strategy_balances:
+        lines = []
+        strat_pnl = defaultdict(float)
+        for t in all_closed:
+            strat_pnl[t["strategy"]] += float(t["pnl_dollars"])
+        for name, bal in sorted(strategy_balances.items()):
+            pnl = bal - 100.0
+            lines.append(f"**{name}**: ${bal:.2f} ({pnl:+.2f} all-time)")
+        embed.add_field(name="Strategy Balances", value="\n".join(lines), inline=False)
+
+    # Best and worst trade of the week
+    if weekly_trades:
+        best = max(weekly_trades, key=lambda t: float(t["pnl_dollars"]))
+        worst = min(weekly_trades, key=lambda t: float(t["pnl_dollars"]))
+        lines = [
+            f"**Best:** {best['strategy']} — {best['exit_reason']} ${float(best['pnl_dollars']):+.2f} ({float(best['pnl_pct']):+.2f}%)",
+            f"**Worst:** {worst['strategy']} — {worst['exit_reason']} ${float(worst['pnl_dollars']):+.2f} ({float(worst['pnl_pct']):+.2f}%)",
+        ]
+        embed.add_field(name=f"Week Highlights ({len(weekly_trades)} trades closed)",
+                        value="\n".join(lines), inline=False)
+    else:
+        embed.add_field(name="Week Trades", value="No trades closed this week", inline=False)
+
+    embed.set_footer(text="Weekly summary — every Sunday 09:00 UTC")
+    _send_embed_sync([embed])
+    log.info("Weekly shadow report sent to Discord")
 
 
 def start_discord_listener():

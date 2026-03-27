@@ -11,21 +11,36 @@ from db import (
 log = logging.getLogger(__name__)
 
 # --- Configuration ---
+# Each strategy gets its own $100 balance tracked independently.
 SHADOW_STRATEGIES = {
-    "SOL MACD+RSI": {"product": "SOL-USD", "entry": "_check_entry_macd_rsi_filtered",
-                      "exit": "_check_exit_macd_rsi_filtered", "side": "long"},
-    "SOL RSI Mom":  {"product": "SOL-USD", "entry": "_check_entry_rsi_momentum",
-                      "exit": "_check_exit_rsi_momentum", "side": "long"},
-    "ETH MACD Cross": {"product": "ETH-USD", "entry": "_check_entry_macd_crossover",
-                        "exit": "_check_exit_macd_crossover", "side": "long"},
+    # SOL
+    "SOL MACD+RSI":    {"product": "SOL-USD", "entry": "_check_entry_macd_rsi_filtered",
+                         "exit": "_check_exit_macd_rsi_filtered", "side": "long"},
+    "SOL RSI Mom":     {"product": "SOL-USD", "entry": "_check_entry_rsi_momentum",
+                         "exit": "_check_exit_rsi_momentum", "side": "long"},
+    # ETH
+    "ETH MACD Cross":  {"product": "ETH-USD", "entry": "_check_entry_macd_crossover",
+                         "exit": "_check_exit_macd_crossover", "side": "long"},
+    "ETH MACD+RSI":    {"product": "ETH-USD", "entry": "_check_entry_macd_rsi_filtered",
+                         "exit": "_check_exit_macd_rsi_filtered", "side": "long"},
+    # BTC
+    "BTC MACD+RSI":    {"product": "BTC-USD", "entry": "_check_entry_macd_rsi_filtered",
+                         "exit": "_check_exit_macd_rsi_filtered", "side": "long"},
+    "BTC RSI Mom":     {"product": "BTC-USD", "entry": "_check_entry_rsi_momentum",
+                         "exit": "_check_exit_rsi_momentum", "side": "long"},
+    # XRP
+    "XRP MACD Cross":  {"product": "XRP-USD", "entry": "_check_entry_macd_crossover",
+                         "exit": "_check_exit_macd_crossover", "side": "long"},
+    "XRP RSI Mom":     {"product": "XRP-USD", "entry": "_check_entry_rsi_momentum",
+                         "exit": "_check_exit_rsi_momentum", "side": "long"},
 }
 
 # Wide params — best performer from param sweep
 SHADOW_RISK_PARAMS = {"sl_pct": 0.04, "tp_pct": 0.06, "trail_pct": 0.04}
 
 INITIAL_BALANCE = 100.0
-POSITION_SIZE_PCT = 0.05   # 5% per trade
-MAX_EXPOSURE_PCT = 0.50    # 50% cap
+POSITION_SIZE_PCT = 0.10   # 10% per trade of each strategy's own balance
+MAX_EXPOSURE_PCT = 0.50    # 50% cap per strategy
 ROUND_TRIP_FEE = 0.0002    # 0.02% matching backtester
 
 
@@ -158,7 +173,9 @@ def _check_intra_candle_risk(pos, candle):
 # --- Main Evaluation ---
 
 def evaluate_shadow_trades():
-    """Called after each 1-hour candle collection. Checks exits then entries."""
+    """Called after each 1-hour candle collection. Checks exits then entries.
+    Each strategy manages its own $100 balance independently.
+    """
 
     # Cache DataFrames per product to avoid redundant DB queries
     df_cache = {}
@@ -172,6 +189,7 @@ def evaluate_shadow_trades():
     open_positions = get_open_shadow_trades()
     for pos in open_positions:
         product = pos["product"]
+        strat_name = pos["strategy"]
         df = _get_df(product)
         if len(df) < 2:
             continue
@@ -189,10 +207,9 @@ def evaluate_shadow_trades():
             pnl_dollars = float(pos["position_size"]) * pnl_pct
             close_shadow_trade(pos["id"], exit_price, curr["ts"], reason,
                                round(pnl_dollars, 4), round(pnl_pct * 100, 4))
-            # Update balance
-            balance = get_shadow_balance()
-            update_shadow_balance(round(balance + pnl_dollars, 2), "trade_close")
-            log.info(f"SHADOW EXIT [{pos['strategy']}] {pos['product']} {reason} "
+            balance = get_shadow_balance(strategy=strat_name)
+            update_shadow_balance(round(balance + pnl_dollars, 2), "trade_close", strategy=strat_name)
+            log.info(f"SHADOW EXIT [{strat_name}] {product} {reason} "
                      f"@ {exit_price:.4f} P&L: ${pnl_dollars:+.2f} ({pnl_pct*100:+.2f}%)")
             continue
 
@@ -201,7 +218,7 @@ def evaluate_shadow_trades():
             update_peak_price(pos["id"], new_peak)
 
         # 1c. Signal-based exit
-        strat_config = SHADOW_STRATEGIES.get(pos["strategy"])
+        strat_config = SHADOW_STRATEGIES.get(strat_name)
         if strat_config:
             exit_func = EXIT_FUNCS.get(strat_config["exit"])
             if exit_func and exit_func(prev, curr):
@@ -212,22 +229,12 @@ def evaluate_shadow_trades():
                 pnl_dollars = float(pos["position_size"]) * pnl_pct
                 close_shadow_trade(pos["id"], exit_price, curr["ts"], "signal",
                                    round(pnl_dollars, 4), round(pnl_pct * 100, 4))
-                balance = get_shadow_balance()
-                update_shadow_balance(round(balance + pnl_dollars, 2), "trade_close")
-                log.info(f"SHADOW EXIT [{pos['strategy']}] {pos['product']} signal "
+                balance = get_shadow_balance(strategy=strat_name)
+                update_shadow_balance(round(balance + pnl_dollars, 2), "trade_close", strategy=strat_name)
+                log.info(f"SHADOW EXIT [{strat_name}] {product} signal "
                          f"@ {exit_price:.4f} P&L: ${pnl_dollars:+.2f} ({pnl_pct*100:+.2f}%)")
 
-    # --- PHASE 2: Check for new entry signals ---
-    balance = get_shadow_balance()
-    if balance <= 0:
-        log.warning("Shadow balance <= 0, skipping entries")
-        return
-
-    # Calculate current total exposure
-    open_positions = get_open_shadow_trades()  # refresh after exits
-    total_exposure = sum(float(p["position_size"]) for p in open_positions)
-    position_size = round(balance * POSITION_SIZE_PCT, 2)
-
+    # --- PHASE 2: Check for new entry signals (per-strategy balance) ---
     for strat_name, config in SHADOW_STRATEGIES.items():
         product = config["product"]
         df = _get_df(product)
@@ -237,7 +244,7 @@ def evaluate_shadow_trades():
         prev = df.iloc[-2]
         curr = df.iloc[-1]
 
-        # Check entry signal
+        # Check entry signal first (skip DB calls if no signal)
         entry_func = ENTRY_FUNCS.get(config["entry"])
         if not entry_func or not entry_func(prev, curr):
             continue
@@ -247,22 +254,30 @@ def evaluate_shadow_trades():
         if any(str(p["entry_ts"]) == str(curr["ts"]) for p in existing):
             continue
 
-        # Exposure cap check
-        if total_exposure + position_size > balance * MAX_EXPOSURE_PCT:
+        # Per-strategy balance and exposure
+        balance = get_shadow_balance(strategy=strat_name)
+        if balance <= 0:
+            log.warning(f"Shadow balance <= 0 for {strat_name}, skipping entry")
+            continue
+
+        position_size = round(balance * POSITION_SIZE_PCT, 2)
+        strat_exposure = sum(float(p["position_size"]) for p in existing)
+
+        if strat_exposure + position_size > balance * MAX_EXPOSURE_PCT:
             insert_shadow_trade({
                 "strategy": strat_name, "product": product, "side": config["side"],
                 "status": "skipped", "entry_ts": curr["ts"],
                 "entry_price": float(curr["close"]), "position_size": 0,
                 "peak_price": 0, "sl_pct": 0, "tp_pct": 0, "trail_pct": 0,
-                "notes": f"skipped: exposure cap (${total_exposure:.2f}/{balance * MAX_EXPOSURE_PCT:.2f})",
+                "notes": f"skipped: exposure cap (${strat_exposure:.2f}/{balance * MAX_EXPOSURE_PCT:.2f})",
             })
             log.info(f"SHADOW SKIP [{strat_name}] {product} — exposure cap "
-                     f"(${total_exposure:.2f}/{balance * MAX_EXPOSURE_PCT:.2f})")
+                     f"(${strat_exposure:.2f}/{balance * MAX_EXPOSURE_PCT:.2f})")
             continue
 
         # Open position
         entry_price = float(curr["close"])
-        trade_id = insert_shadow_trade({
+        insert_shadow_trade({
             "strategy": strat_name,
             "product": product,
             "side": config["side"],
@@ -279,9 +294,10 @@ def evaluate_shadow_trades():
             "entry_adx": float(curr["adx_14"]) if not pd.isna(curr.get("adx_14")) else None,
             "entry_atr": float(curr["atr_14"]) if not pd.isna(curr.get("atr_14")) else None,
         })
-        total_exposure += position_size
         log.info(f"SHADOW ENTRY [{strat_name}] {product} long @ {entry_price:.4f} "
-                 f"size=${position_size:.2f} SL={entry_price*(1-SHADOW_RISK_PARAMS['sl_pct']):.4f} "
+                 f"size=${position_size:.2f} bal=${balance:.2f} "
+                 f"SL={entry_price*(1-SHADOW_RISK_PARAMS['sl_pct']):.4f} "
                  f"TP={entry_price*(1+SHADOW_RISK_PARAMS['tp_pct']):.4f}")
 
-    log.info(f"Shadow eval complete — {len(open_positions)} open positions, balance=${balance:.2f}")
+    all_open = get_open_shadow_trades()
+    log.info(f"Shadow eval complete — {len(all_open)} open positions across {len(SHADOW_STRATEGIES)} strategies")

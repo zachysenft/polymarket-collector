@@ -79,6 +79,7 @@ DO $$ BEGIN
     ALTER TABLE indicators ADD COLUMN IF NOT EXISTS obv NUMERIC(20,2);
     ALTER TABLE indicators ADD COLUMN IF NOT EXISTS stoch_rsi NUMERIC(8,4);
     ALTER TABLE indicators ADD COLUMN IF NOT EXISTS vwap NUMERIC(14,4);
+    ALTER TABLE shadow_balance ADD COLUMN IF NOT EXISTS strategy TEXT;
 END $$;
 
 CREATE TABLE IF NOT EXISTS shadow_trades (
@@ -350,16 +351,21 @@ def get_all_closed_shadow_trades():
     return rows
 
 
-def get_shadow_balance():
+def get_shadow_balance(strategy=None):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT balance FROM shadow_balance ORDER BY id DESC LIMIT 1")
+    if strategy:
+        cur.execute(
+            "SELECT balance FROM shadow_balance WHERE strategy=%s ORDER BY id DESC LIMIT 1",
+            (strategy,))
+    else:
+        cur.execute(
+            "SELECT balance FROM shadow_balance WHERE strategy IS NULL ORDER BY id DESC LIMIT 1")
     row = cur.fetchone()
     if not row:
-        # Initialize balance
         cur.execute(
-            "INSERT INTO shadow_balance (ts, balance, event) VALUES (%s, %s, %s)",
-            (datetime.now(timezone.utc), 100.0, "init"))
+            "INSERT INTO shadow_balance (ts, balance, event, strategy) VALUES (%s, %s, %s, %s)",
+            (datetime.now(timezone.utc), 100.0, "init", strategy))
         conn.commit()
         cur.close()
         conn.close()
@@ -369,15 +375,31 @@ def get_shadow_balance():
     return float(row[0])
 
 
-def update_shadow_balance(balance, event):
+def update_shadow_balance(balance, event, strategy=None):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO shadow_balance (ts, balance, event) VALUES (%s, %s, %s)",
-        (datetime.now(timezone.utc), balance, event))
+        "INSERT INTO shadow_balance (ts, balance, event, strategy) VALUES (%s, %s, %s, %s)",
+        (datetime.now(timezone.utc), balance, event, strategy))
     conn.commit()
     cur.close()
     conn.close()
+
+
+def get_all_strategy_balances():
+    """Get latest balance for each strategy."""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT DISTINCT ON (strategy) strategy, balance
+        FROM shadow_balance
+        WHERE strategy IS NOT NULL
+        ORDER BY strategy, id DESC
+    """)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return {r[0]: float(r[1]) for r in rows}
 
 
 def get_full_dataset(product, granularity):
