@@ -24,6 +24,10 @@ def ohlcv_5min_job():
         collect_all_products(300)
     except Exception as e:
         log.error(f"5-min OHLCV job failed: {e}")
+    try:
+        evaluate_shadow_trades("5min")
+    except Exception as e:
+        log.error(f"5-min shadow trade evaluation failed: {e}")
 
 
 def ohlcv_1hour_job():
@@ -32,9 +36,9 @@ def ohlcv_1hour_job():
     except Exception as e:
         log.error(f"1-hour OHLCV job failed: {e}")
     try:
-        evaluate_shadow_trades()
+        evaluate_shadow_trades("1hour")
     except Exception as e:
-        log.error(f"Shadow trade evaluation failed: {e}")
+        log.error(f"1-hour shadow trade evaluation failed: {e}")
 
 
 def shadow_checkin_job():
@@ -74,6 +78,10 @@ def daily_backtest_job():
             send_trade_breakdown(bt_results)
         except Exception as e:
             log.error(f"Discord notification failed: {e}")
+        try:
+            evaluate_shadow_trades("1day")
+        except Exception as e:
+            log.error(f"1-day shadow trade evaluation failed: {e}")
         log.info("Daily backtest complete")
     except Exception as e:
         log.error(f"Daily backtest job failed: {e}")

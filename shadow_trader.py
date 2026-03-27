@@ -13,26 +13,33 @@ log = logging.getLogger(__name__)
 # --- Configuration ---
 # Each strategy gets its own $100 balance tracked independently.
 SHADOW_STRATEGIES = {
-    # SOL
-    "SOL MACD+RSI":    {"product": "SOL-USD", "entry": "_check_entry_macd_rsi_filtered",
-                         "exit": "_check_exit_macd_rsi_filtered", "side": "long"},
-    "SOL RSI Mom":     {"product": "SOL-USD", "entry": "_check_entry_rsi_momentum",
-                         "exit": "_check_exit_rsi_momentum", "side": "long"},
-    # ETH
-    "ETH MACD Cross":  {"product": "ETH-USD", "entry": "_check_entry_macd_crossover",
-                         "exit": "_check_exit_macd_crossover", "side": "long"},
-    "ETH MACD+RSI":    {"product": "ETH-USD", "entry": "_check_entry_macd_rsi_filtered",
-                         "exit": "_check_exit_macd_rsi_filtered", "side": "long"},
-    # BTC
-    "BTC MACD+RSI":    {"product": "BTC-USD", "entry": "_check_entry_macd_rsi_filtered",
-                         "exit": "_check_exit_macd_rsi_filtered", "side": "long"},
-    "BTC RSI Mom":     {"product": "BTC-USD", "entry": "_check_entry_rsi_momentum",
-                         "exit": "_check_exit_rsi_momentum", "side": "long"},
-    # XRP
-    "XRP MACD Cross":  {"product": "XRP-USD", "entry": "_check_entry_macd_crossover",
-                         "exit": "_check_exit_macd_crossover", "side": "long"},
-    "XRP RSI Mom":     {"product": "XRP-USD", "entry": "_check_entry_rsi_momentum",
-                         "exit": "_check_exit_rsi_momentum", "side": "long"},
+    # --- 5min ---
+    "SOL MACD+RSI 5min":    {"product": "SOL-USD", "granularity": "5min", "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "side": "long"},
+    "SOL RSI Mom 5min":     {"product": "SOL-USD", "granularity": "5min", "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "side": "long"},
+    "ETH MACD Cross 5min":  {"product": "ETH-USD", "granularity": "5min", "entry": "_check_entry_macd_crossover",     "exit": "_check_exit_macd_crossover",     "side": "long"},
+    "ETH MACD+RSI 5min":    {"product": "ETH-USD", "granularity": "5min", "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "side": "long"},
+    "BTC MACD+RSI 5min":    {"product": "BTC-USD", "granularity": "5min", "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "side": "long"},
+    "BTC RSI Mom 5min":     {"product": "BTC-USD", "granularity": "5min", "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "side": "long"},
+    "XRP MACD Cross 5min":  {"product": "XRP-USD", "granularity": "5min", "entry": "_check_entry_macd_crossover",     "exit": "_check_exit_macd_crossover",     "side": "long"},
+    "XRP RSI Mom 5min":     {"product": "XRP-USD", "granularity": "5min", "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "side": "long"},
+    # --- 1hour ---
+    "SOL MACD+RSI 1hour":   {"product": "SOL-USD", "granularity": "1hour", "entry": "_check_entry_macd_rsi_filtered", "exit": "_check_exit_macd_rsi_filtered",  "side": "long"},
+    "SOL RSI Mom 1hour":    {"product": "SOL-USD", "granularity": "1hour", "entry": "_check_entry_rsi_momentum",      "exit": "_check_exit_rsi_momentum",       "side": "long"},
+    "ETH MACD Cross 1hour": {"product": "ETH-USD", "granularity": "1hour", "entry": "_check_entry_macd_crossover",    "exit": "_check_exit_macd_crossover",     "side": "long"},
+    "ETH MACD+RSI 1hour":   {"product": "ETH-USD", "granularity": "1hour", "entry": "_check_entry_macd_rsi_filtered", "exit": "_check_exit_macd_rsi_filtered",  "side": "long"},
+    "BTC MACD+RSI 1hour":   {"product": "BTC-USD", "granularity": "1hour", "entry": "_check_entry_macd_rsi_filtered", "exit": "_check_exit_macd_rsi_filtered",  "side": "long"},
+    "BTC RSI Mom 1hour":    {"product": "BTC-USD", "granularity": "1hour", "entry": "_check_entry_rsi_momentum",      "exit": "_check_exit_rsi_momentum",       "side": "long"},
+    "XRP MACD Cross 1hour": {"product": "XRP-USD", "granularity": "1hour", "entry": "_check_entry_macd_crossover",    "exit": "_check_exit_macd_crossover",     "side": "long"},
+    "XRP RSI Mom 1hour":    {"product": "XRP-USD", "granularity": "1hour", "entry": "_check_entry_rsi_momentum",      "exit": "_check_exit_rsi_momentum",       "side": "long"},
+    # --- 1day ---
+    "SOL MACD+RSI 1day":    {"product": "SOL-USD", "granularity": "1day", "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "side": "long"},
+    "SOL RSI Mom 1day":     {"product": "SOL-USD", "granularity": "1day", "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "side": "long"},
+    "ETH MACD Cross 1day":  {"product": "ETH-USD", "granularity": "1day", "entry": "_check_entry_macd_crossover",     "exit": "_check_exit_macd_crossover",     "side": "long"},
+    "ETH MACD+RSI 1day":    {"product": "ETH-USD", "granularity": "1day", "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "side": "long"},
+    "BTC MACD+RSI 1day":    {"product": "BTC-USD", "granularity": "1day", "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "side": "long"},
+    "BTC RSI Mom 1day":     {"product": "BTC-USD", "granularity": "1day", "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "side": "long"},
+    "XRP MACD Cross 1day":  {"product": "XRP-USD", "granularity": "1day", "entry": "_check_entry_macd_crossover",     "exit": "_check_exit_macd_crossover",     "side": "long"},
+    "XRP RSI Mom 1day":     {"product": "XRP-USD", "granularity": "1day", "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "side": "long"},
 }
 
 # Wide params — best performer from param sweep
@@ -172,21 +179,24 @@ def _check_intra_candle_risk(pos, candle):
 
 # --- Main Evaluation ---
 
-def evaluate_shadow_trades():
-    """Called after each 1-hour candle collection. Checks exits then entries.
+def evaluate_shadow_trades(granularity):
+    """Check exits then entries for all strategies matching the given granularity.
+    Called after each candle collection job (5min, 1hour, 1day).
     Each strategy manages its own $100 balance independently.
     """
+    active_strategies = {k: v for k, v in SHADOW_STRATEGIES.items() if v["granularity"] == granularity}
+    active_strategy_names = set(active_strategies.keys())
 
     # Cache DataFrames per product to avoid redundant DB queries
     df_cache = {}
 
     def _get_df(product):
         if product not in df_cache:
-            df_cache[product] = get_full_dataset(product, "1hour")
+            df_cache[product] = get_full_dataset(product, granularity)
         return df_cache[product]
 
-    # --- PHASE 1: Check exits on open positions ---
-    open_positions = get_open_shadow_trades()
+    # --- PHASE 1: Check exits on open positions (this granularity only) ---
+    open_positions = [p for p in get_open_shadow_trades() if p["strategy"] in active_strategy_names]
     for pos in open_positions:
         product = pos["product"]
         strat_name = pos["strategy"]
@@ -235,7 +245,7 @@ def evaluate_shadow_trades():
                          f"@ {exit_price:.4f} P&L: ${pnl_dollars:+.2f} ({pnl_pct*100:+.2f}%)")
 
     # --- PHASE 2: Check for new entry signals (per-strategy balance) ---
-    for strat_name, config in SHADOW_STRATEGIES.items():
+    for strat_name, config in active_strategies.items():
         product = config["product"]
         df = _get_df(product)
         if len(df) < 2:
@@ -299,5 +309,5 @@ def evaluate_shadow_trades():
                  f"SL={entry_price*(1-SHADOW_RISK_PARAMS['sl_pct']):.4f} "
                  f"TP={entry_price*(1+SHADOW_RISK_PARAMS['tp_pct']):.4f}")
 
-    all_open = get_open_shadow_trades()
-    log.info(f"Shadow eval complete — {len(all_open)} open positions across {len(SHADOW_STRATEGIES)} strategies")
+    all_open = [p for p in get_open_shadow_trades() if p["strategy"] in active_strategy_names]
+    log.info(f"Shadow eval [{granularity}] complete — {len(all_open)} open positions across {len(active_strategies)} strategies")
