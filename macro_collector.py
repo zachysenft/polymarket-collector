@@ -1,6 +1,7 @@
 import logging
-from datetime import datetime, timezone, timedelta, date
+from datetime import timedelta, date
 
+import requests as _requests
 import yfinance as yf
 
 from db import upsert_macro_daily, get_latest_macro_ts
@@ -9,10 +10,20 @@ log = logging.getLogger(__name__)
 
 SYMBOLS = ["SPY", "QQQ", "^VIX"]
 
+# Yahoo Finance blocks cloud server IPs by default — a browser User-Agent bypasses it
+_SESSION = _requests.Session()
+_SESSION.headers.update({
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    )
+})
+
 
 def _fetch_symbol(symbol, start_date, end_date):
     """Fetch daily OHLCV for a symbol between start and end dates."""
-    ticker = yf.Ticker(symbol)
+    ticker = yf.Ticker(symbol, session=_SESSION)
     hist = ticker.history(start=start_date.isoformat(), end=end_date.isoformat())
     if hist.empty:
         return []
