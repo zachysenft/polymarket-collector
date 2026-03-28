@@ -3,103 +3,44 @@ import pandas as pd
 from datetime import datetime, timezone
 
 from db import (
-    get_full_dataset, get_open_shadow_trades, get_shadow_balance,
-    insert_shadow_trade, close_shadow_trade, update_peak_price,
-    update_shadow_balance,
+    get_full_dataset, get_open_shadow_trades,
+    get_all_strategy_balances, insert_shadow_trade, close_shadow_trade,
+    update_peak_price, update_shadow_balance,
 )
 
 log = logging.getLogger(__name__)
 
 # --- Configuration ---
-# Each strategy gets its own $100 balance tracked independently.
-SHADOW_STRATEGIES = {
-    # ===================== LONG ONLY =====================
-    # --- 5min ---
-    "SOL MACD+RSI Long 5min":    {"product": "SOL-USD", "granularity": "5min",  "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "side": "long"},
-    "SOL RSI Mom Long 5min":     {"product": "SOL-USD", "granularity": "5min",  "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "side": "long"},
-    "ETH MACD Cross Long 5min":  {"product": "ETH-USD", "granularity": "5min",  "entry": "_check_entry_macd_crossover",     "exit": "_check_exit_macd_crossover",     "side": "long"},
-    "ETH MACD+RSI Long 5min":    {"product": "ETH-USD", "granularity": "5min",  "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "side": "long"},
-    "BTC MACD+RSI Long 5min":    {"product": "BTC-USD", "granularity": "5min",  "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "side": "long"},
-    "BTC RSI Mom Long 5min":     {"product": "BTC-USD", "granularity": "5min",  "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "side": "long"},
-    "XRP MACD Cross Long 5min":  {"product": "XRP-USD", "granularity": "5min",  "entry": "_check_entry_macd_crossover",     "exit": "_check_exit_macd_crossover",     "side": "long"},
-    "XRP RSI Mom Long 5min":     {"product": "XRP-USD", "granularity": "5min",  "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "side": "long"},
-    # --- 1hour ---
-    "SOL MACD+RSI Long 1hour":   {"product": "SOL-USD", "granularity": "1hour", "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "side": "long"},
-    "SOL RSI Mom Long 1hour":    {"product": "SOL-USD", "granularity": "1hour", "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "side": "long"},
-    "ETH MACD Cross Long 1hour": {"product": "ETH-USD", "granularity": "1hour", "entry": "_check_entry_macd_crossover",     "exit": "_check_exit_macd_crossover",     "side": "long"},
-    "ETH MACD+RSI Long 1hour":   {"product": "ETH-USD", "granularity": "1hour", "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "side": "long"},
-    "BTC MACD+RSI Long 1hour":   {"product": "BTC-USD", "granularity": "1hour", "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "side": "long"},
-    "BTC RSI Mom Long 1hour":    {"product": "BTC-USD", "granularity": "1hour", "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "side": "long"},
-    "XRP MACD Cross Long 1hour": {"product": "XRP-USD", "granularity": "1hour", "entry": "_check_entry_macd_crossover",     "exit": "_check_exit_macd_crossover",     "side": "long"},
-    "XRP RSI Mom Long 1hour":    {"product": "XRP-USD", "granularity": "1hour", "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "side": "long"},
-    # --- 1day ---
-    "SOL MACD+RSI Long 1day":    {"product": "SOL-USD", "granularity": "1day",  "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "side": "long"},
-    "SOL RSI Mom Long 1day":     {"product": "SOL-USD", "granularity": "1day",  "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "side": "long"},
-    "ETH MACD Cross Long 1day":  {"product": "ETH-USD", "granularity": "1day",  "entry": "_check_entry_macd_crossover",     "exit": "_check_exit_macd_crossover",     "side": "long"},
-    "ETH MACD+RSI Long 1day":    {"product": "ETH-USD", "granularity": "1day",  "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "side": "long"},
-    "BTC MACD+RSI Long 1day":    {"product": "BTC-USD", "granularity": "1day",  "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "side": "long"},
-    "BTC RSI Mom Long 1day":     {"product": "BTC-USD", "granularity": "1day",  "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "side": "long"},
-    "XRP MACD Cross Long 1day":  {"product": "XRP-USD", "granularity": "1day",  "entry": "_check_entry_macd_crossover",     "exit": "_check_exit_macd_crossover",     "side": "long"},
-    "XRP RSI Mom Long 1day":     {"product": "XRP-USD", "granularity": "1day",  "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "side": "long"},
+# To add a new strategy: add one entry to _STRATEGY_TEMPLATES below.
+# It will automatically be created for all assets, granularities, and sides.
+_ASSETS = [
+    ("SOL", "SOL-USD"),
+    ("ETH", "ETH-USD"),
+    ("BTC", "BTC-USD"),
+    ("XRP", "XRP-USD"),
+]
+_GRANULARITIES = ["5min", "1hour", "1day"]
+_STRATEGY_TEMPLATES = [
+    # (label, long_entry, long_exit)
+    ("MACD+RSI", "_check_entry_macd_rsi_filtered",  "_check_exit_macd_rsi_filtered"),
+    ("RSI Mom",  "_check_entry_rsi_momentum",        "_check_exit_rsi_momentum"),
+    ("MACD Cross","_check_entry_macd_crossover",     "_check_exit_macd_crossover"),
+]
 
-    # ===================== SHORT ONLY =====================
-    # --- 5min ---
-    "SOL MACD+RSI Short 5min":    {"product": "SOL-USD", "granularity": "5min",  "entry": "_check_entry_macd_rsi_filtered_short",  "exit": "_check_exit_macd_rsi_filtered_short",  "side": "short"},
-    "SOL RSI Mom Short 5min":     {"product": "SOL-USD", "granularity": "5min",  "entry": "_check_entry_rsi_momentum_short",        "exit": "_check_exit_rsi_momentum_short",        "side": "short"},
-    "ETH MACD Cross Short 5min":  {"product": "ETH-USD", "granularity": "5min",  "entry": "_check_entry_macd_crossover_short",      "exit": "_check_exit_macd_crossover_short",      "side": "short"},
-    "ETH MACD+RSI Short 5min":    {"product": "ETH-USD", "granularity": "5min",  "entry": "_check_entry_macd_rsi_filtered_short",   "exit": "_check_exit_macd_rsi_filtered_short",   "side": "short"},
-    "BTC MACD+RSI Short 5min":    {"product": "BTC-USD", "granularity": "5min",  "entry": "_check_entry_macd_rsi_filtered_short",   "exit": "_check_exit_macd_rsi_filtered_short",   "side": "short"},
-    "BTC RSI Mom Short 5min":     {"product": "BTC-USD", "granularity": "5min",  "entry": "_check_entry_rsi_momentum_short",        "exit": "_check_exit_rsi_momentum_short",        "side": "short"},
-    "XRP MACD Cross Short 5min":  {"product": "XRP-USD", "granularity": "5min",  "entry": "_check_entry_macd_crossover_short",      "exit": "_check_exit_macd_crossover_short",      "side": "short"},
-    "XRP RSI Mom Short 5min":     {"product": "XRP-USD", "granularity": "5min",  "entry": "_check_entry_rsi_momentum_short",        "exit": "_check_exit_rsi_momentum_short",        "side": "short"},
-    # --- 1hour ---
-    "SOL MACD+RSI Short 1hour":   {"product": "SOL-USD", "granularity": "1hour", "entry": "_check_entry_macd_rsi_filtered_short",   "exit": "_check_exit_macd_rsi_filtered_short",   "side": "short"},
-    "SOL RSI Mom Short 1hour":    {"product": "SOL-USD", "granularity": "1hour", "entry": "_check_entry_rsi_momentum_short",        "exit": "_check_exit_rsi_momentum_short",        "side": "short"},
-    "ETH MACD Cross Short 1hour": {"product": "ETH-USD", "granularity": "1hour", "entry": "_check_entry_macd_crossover_short",      "exit": "_check_exit_macd_crossover_short",      "side": "short"},
-    "ETH MACD+RSI Short 1hour":   {"product": "ETH-USD", "granularity": "1hour", "entry": "_check_entry_macd_rsi_filtered_short",   "exit": "_check_exit_macd_rsi_filtered_short",   "side": "short"},
-    "BTC MACD+RSI Short 1hour":   {"product": "BTC-USD", "granularity": "1hour", "entry": "_check_entry_macd_rsi_filtered_short",   "exit": "_check_exit_macd_rsi_filtered_short",   "side": "short"},
-    "BTC RSI Mom Short 1hour":    {"product": "BTC-USD", "granularity": "1hour", "entry": "_check_entry_rsi_momentum_short",        "exit": "_check_exit_rsi_momentum_short",        "side": "short"},
-    "XRP MACD Cross Short 1hour": {"product": "XRP-USD", "granularity": "1hour", "entry": "_check_entry_macd_crossover_short",      "exit": "_check_exit_macd_crossover_short",      "side": "short"},
-    "XRP RSI Mom Short 1hour":    {"product": "XRP-USD", "granularity": "1hour", "entry": "_check_entry_rsi_momentum_short",        "exit": "_check_exit_rsi_momentum_short",        "side": "short"},
-    # --- 1day ---
-    "SOL MACD+RSI Short 1day":    {"product": "SOL-USD", "granularity": "1day",  "entry": "_check_entry_macd_rsi_filtered_short",   "exit": "_check_exit_macd_rsi_filtered_short",   "side": "short"},
-    "SOL RSI Mom Short 1day":     {"product": "SOL-USD", "granularity": "1day",  "entry": "_check_entry_rsi_momentum_short",        "exit": "_check_exit_rsi_momentum_short",        "side": "short"},
-    "ETH MACD Cross Short 1day":  {"product": "ETH-USD", "granularity": "1day",  "entry": "_check_entry_macd_crossover_short",      "exit": "_check_exit_macd_crossover_short",      "side": "short"},
-    "ETH MACD+RSI Short 1day":    {"product": "ETH-USD", "granularity": "1day",  "entry": "_check_entry_macd_rsi_filtered_short",   "exit": "_check_exit_macd_rsi_filtered_short",   "side": "short"},
-    "BTC MACD+RSI Short 1day":    {"product": "BTC-USD", "granularity": "1day",  "entry": "_check_entry_macd_rsi_filtered_short",   "exit": "_check_exit_macd_rsi_filtered_short",   "side": "short"},
-    "BTC RSI Mom Short 1day":     {"product": "BTC-USD", "granularity": "1day",  "entry": "_check_entry_rsi_momentum_short",        "exit": "_check_exit_rsi_momentum_short",        "side": "short"},
-    "XRP MACD Cross Short 1day":  {"product": "XRP-USD", "granularity": "1day",  "entry": "_check_entry_macd_crossover_short",      "exit": "_check_exit_macd_crossover_short",      "side": "short"},
-    "XRP RSI Mom Short 1day":     {"product": "XRP-USD", "granularity": "1day",  "entry": "_check_entry_rsi_momentum_short",        "exit": "_check_exit_rsi_momentum_short",        "side": "short"},
+def _build_strategies():
+    strategies = {}
+    for label, entry, exit_ in _STRATEGY_TEMPLATES:
+        short_entry = entry + "_short"
+        short_exit  = exit_ + "_short"
+        for asset_label, product in _ASSETS:
+            for gran in _GRANULARITIES:
+                base = f"{asset_label} {label}"
+                strategies[f"{base} Long {gran}"]  = {"product": product, "granularity": gran, "entry": entry,       "exit": exit_,       "side": "long"}
+                strategies[f"{base} Short {gran}"] = {"product": product, "granularity": gran, "entry": short_entry, "exit": short_exit,  "side": "short"}
+                strategies[f"{base} Combo {gran}"] = {"product": product, "granularity": gran, "entry": entry,       "exit": exit_,       "entry_short": short_entry, "exit_short": short_exit, "side": "both"}
+    return strategies
 
-    # ===================== COMBINED (long + short) =====================
-    # --- 5min ---
-    "SOL MACD+RSI Combo 5min":    {"product": "SOL-USD", "granularity": "5min",  "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "entry_short": "_check_entry_macd_rsi_filtered_short",  "exit_short": "_check_exit_macd_rsi_filtered_short",  "side": "both"},
-    "SOL RSI Mom Combo 5min":     {"product": "SOL-USD", "granularity": "5min",  "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "entry_short": "_check_entry_rsi_momentum_short",        "exit_short": "_check_exit_rsi_momentum_short",        "side": "both"},
-    "ETH MACD Cross Combo 5min":  {"product": "ETH-USD", "granularity": "5min",  "entry": "_check_entry_macd_crossover",     "exit": "_check_exit_macd_crossover",     "entry_short": "_check_entry_macd_crossover_short",      "exit_short": "_check_exit_macd_crossover_short",      "side": "both"},
-    "ETH MACD+RSI Combo 5min":    {"product": "ETH-USD", "granularity": "5min",  "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "entry_short": "_check_entry_macd_rsi_filtered_short",   "exit_short": "_check_exit_macd_rsi_filtered_short",   "side": "both"},
-    "BTC MACD+RSI Combo 5min":    {"product": "BTC-USD", "granularity": "5min",  "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "entry_short": "_check_entry_macd_rsi_filtered_short",   "exit_short": "_check_exit_macd_rsi_filtered_short",   "side": "both"},
-    "BTC RSI Mom Combo 5min":     {"product": "BTC-USD", "granularity": "5min",  "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "entry_short": "_check_entry_rsi_momentum_short",        "exit_short": "_check_exit_rsi_momentum_short",        "side": "both"},
-    "XRP MACD Cross Combo 5min":  {"product": "XRP-USD", "granularity": "5min",  "entry": "_check_entry_macd_crossover",     "exit": "_check_exit_macd_crossover",     "entry_short": "_check_entry_macd_crossover_short",      "exit_short": "_check_exit_macd_crossover_short",      "side": "both"},
-    "XRP RSI Mom Combo 5min":     {"product": "XRP-USD", "granularity": "5min",  "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "entry_short": "_check_entry_rsi_momentum_short",        "exit_short": "_check_exit_rsi_momentum_short",        "side": "both"},
-    # --- 1hour ---
-    "SOL MACD+RSI Combo 1hour":   {"product": "SOL-USD", "granularity": "1hour", "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "entry_short": "_check_entry_macd_rsi_filtered_short",  "exit_short": "_check_exit_macd_rsi_filtered_short",  "side": "both"},
-    "SOL RSI Mom Combo 1hour":    {"product": "SOL-USD", "granularity": "1hour", "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "entry_short": "_check_entry_rsi_momentum_short",       "exit_short": "_check_exit_rsi_momentum_short",        "side": "both"},
-    "ETH MACD Cross Combo 1hour": {"product": "ETH-USD", "granularity": "1hour", "entry": "_check_entry_macd_crossover",     "exit": "_check_exit_macd_crossover",     "entry_short": "_check_entry_macd_crossover_short",     "exit_short": "_check_exit_macd_crossover_short",      "side": "both"},
-    "ETH MACD+RSI Combo 1hour":   {"product": "ETH-USD", "granularity": "1hour", "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "entry_short": "_check_entry_macd_rsi_filtered_short",  "exit_short": "_check_exit_macd_rsi_filtered_short",   "side": "both"},
-    "BTC MACD+RSI Combo 1hour":   {"product": "BTC-USD", "granularity": "1hour", "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "entry_short": "_check_entry_macd_rsi_filtered_short",  "exit_short": "_check_exit_macd_rsi_filtered_short",   "side": "both"},
-    "BTC RSI Mom Combo 1hour":    {"product": "BTC-USD", "granularity": "1hour", "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "entry_short": "_check_entry_rsi_momentum_short",       "exit_short": "_check_exit_rsi_momentum_short",        "side": "both"},
-    "XRP MACD Cross Combo 1hour": {"product": "XRP-USD", "granularity": "1hour", "entry": "_check_entry_macd_crossover",     "exit": "_check_exit_macd_crossover",     "entry_short": "_check_entry_macd_crossover_short",     "exit_short": "_check_exit_macd_crossover_short",      "side": "both"},
-    "XRP RSI Mom Combo 1hour":    {"product": "XRP-USD", "granularity": "1hour", "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "entry_short": "_check_entry_rsi_momentum_short",       "exit_short": "_check_exit_rsi_momentum_short",        "side": "both"},
-    # --- 1day ---
-    "SOL MACD+RSI Combo 1day":    {"product": "SOL-USD", "granularity": "1day",  "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "entry_short": "_check_entry_macd_rsi_filtered_short",  "exit_short": "_check_exit_macd_rsi_filtered_short",  "side": "both"},
-    "SOL RSI Mom Combo 1day":     {"product": "SOL-USD", "granularity": "1day",  "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "entry_short": "_check_entry_rsi_momentum_short",       "exit_short": "_check_exit_rsi_momentum_short",        "side": "both"},
-    "ETH MACD Cross Combo 1day":  {"product": "ETH-USD", "granularity": "1day",  "entry": "_check_entry_macd_crossover",     "exit": "_check_exit_macd_crossover",     "entry_short": "_check_entry_macd_crossover_short",     "exit_short": "_check_exit_macd_crossover_short",      "side": "both"},
-    "ETH MACD+RSI Combo 1day":    {"product": "ETH-USD", "granularity": "1day",  "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "entry_short": "_check_entry_macd_rsi_filtered_short",  "exit_short": "_check_exit_macd_rsi_filtered_short",   "side": "both"},
-    "BTC MACD+RSI Combo 1day":    {"product": "BTC-USD", "granularity": "1day",  "entry": "_check_entry_macd_rsi_filtered",  "exit": "_check_exit_macd_rsi_filtered",  "entry_short": "_check_entry_macd_rsi_filtered_short",  "exit_short": "_check_exit_macd_rsi_filtered_short",   "side": "both"},
-    "BTC RSI Mom Combo 1day":     {"product": "BTC-USD", "granularity": "1day",  "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "entry_short": "_check_entry_rsi_momentum_short",       "exit_short": "_check_exit_rsi_momentum_short",        "side": "both"},
-    "XRP MACD Cross Combo 1day":  {"product": "XRP-USD", "granularity": "1day",  "entry": "_check_entry_macd_crossover",     "exit": "_check_exit_macd_crossover",     "entry_short": "_check_entry_macd_crossover_short",     "exit_short": "_check_exit_macd_crossover_short",      "side": "both"},
-    "XRP RSI Mom Combo 1day":     {"product": "XRP-USD", "granularity": "1day",  "entry": "_check_entry_rsi_momentum",       "exit": "_check_exit_rsi_momentum",       "entry_short": "_check_entry_rsi_momentum_short",       "exit_short": "_check_exit_rsi_momentum_short",        "side": "both"},
-}
+SHADOW_STRATEGIES = _build_strategies()
 
 # Wide params — best performer from param sweep
 SHADOW_RISK_PARAMS = {"sl_pct": 0.04, "tp_pct": 0.06, "trail_pct": 0.04}
@@ -314,8 +255,13 @@ def evaluate_shadow_trades(granularity):
             df_cache[product] = get_full_dataset(product, granularity)
         return df_cache[product]
 
+    # Pre-fetch open positions and strategy balances once
+    all_open = get_open_shadow_trades()
+    open_positions = [p for p in all_open if p["strategy"] in active_strategy_names]
+    all_balances = get_all_strategy_balances()
+    closed_ids = set()
+
     # --- PHASE 1: Check exits on open positions (this granularity only) ---
-    open_positions = [p for p in get_open_shadow_trades() if p["strategy"] in active_strategy_names]
     for pos in open_positions:
         product = pos["product"]
         strat_name = pos["strategy"]
@@ -336,8 +282,11 @@ def evaluate_shadow_trades(granularity):
             pnl_dollars = float(pos["position_size"]) * pnl_pct
             close_shadow_trade(pos["id"], exit_price, curr["ts"], reason,
                                round(pnl_dollars, 4), round(pnl_pct * 100, 4))
-            balance = get_shadow_balance(strategy=strat_name)
-            update_shadow_balance(round(balance + pnl_dollars, 2), "trade_close", strategy=strat_name)
+            balance = all_balances.get(strat_name, INITIAL_BALANCE)
+            new_balance = round(balance + pnl_dollars, 2)
+            update_shadow_balance(new_balance, "trade_close", strategy=strat_name)
+            all_balances[strat_name] = new_balance
+            closed_ids.add(pos["id"])
             log.info(f"SHADOW EXIT [{strat_name}] {product} {reason} "
                      f"@ {exit_price:.4f} P&L: ${pnl_dollars:+.2f} ({pnl_pct*100:+.2f}%)")
             continue
@@ -359,12 +308,18 @@ def evaluate_shadow_trades(granularity):
                 pnl_dollars = float(pos["position_size"]) * pnl_pct
                 close_shadow_trade(pos["id"], exit_price, curr["ts"], "signal",
                                    round(pnl_dollars, 4), round(pnl_pct * 100, 4))
-                balance = get_shadow_balance(strategy=strat_name)
-                update_shadow_balance(round(balance + pnl_dollars, 2), "trade_close", strategy=strat_name)
+                balance = all_balances.get(strat_name, INITIAL_BALANCE)
+                new_balance = round(balance + pnl_dollars, 2)
+                update_shadow_balance(new_balance, "trade_close", strategy=strat_name)
+                all_balances[strat_name] = new_balance
+                closed_ids.add(pos["id"])
                 log.info(f"SHADOW EXIT [{strat_name}] {product} signal "
                          f"@ {exit_price:.4f} P&L: ${pnl_dollars:+.2f} ({pnl_pct*100:+.2f}%)")
 
     # --- PHASE 2: Check for new entry signals (per-strategy balance) ---
+    # Positions still open after Phase 1 exits
+    still_open = [p for p in open_positions if p["id"] not in closed_ids]
+
     for strat_name, config in active_strategies.items():
         product = config["product"]
         df = _get_df(product)
@@ -384,18 +339,18 @@ def evaluate_shadow_trades(granularity):
                 continue
 
             # Duplicate prevention: don't enter same strategy+side on same candle
-            existing = get_open_shadow_trades(strategy=strat_name)
-            if any(str(p["entry_ts"]) == str(curr["ts"]) and p["side"] == trade_side for p in existing):
+            strat_open = [p for p in still_open if p["strategy"] == strat_name]
+            if any(str(p["entry_ts"]) == str(curr["ts"]) and p["side"] == trade_side for p in strat_open):
                 continue
 
             # Per-strategy balance and exposure
-            balance = get_shadow_balance(strategy=strat_name)
+            balance = all_balances.get(strat_name, INITIAL_BALANCE)
             if balance <= 0:
                 log.warning(f"Shadow balance <= 0 for {strat_name}, skipping entry")
                 continue
 
             position_size = round(balance * POSITION_SIZE_PCT, 2)
-            strat_exposure = sum(float(p["position_size"]) for p in existing)
+            strat_exposure = sum(float(p["position_size"]) for p in strat_open)
 
             if strat_exposure + position_size > balance * MAX_EXPOSURE_PCT:
                 insert_shadow_trade({
@@ -434,5 +389,4 @@ def evaluate_shadow_trades(granularity):
                      f"size=${position_size:.2f} bal=${balance:.2f} "
                      f"SL={sl_price:.4f} TP={tp_price:.4f}")
 
-    all_open = [p for p in get_open_shadow_trades() if p["strategy"] in active_strategy_names]
-    log.info(f"Shadow eval [{granularity}] complete — {len(all_open)} open positions across {len(active_strategies)} strategies")
+    log.info(f"Shadow eval [{granularity}] complete — {len(still_open)} open positions across {len(active_strategies)} strategies")
