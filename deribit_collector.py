@@ -76,26 +76,37 @@ def _compute_surface(options_rows, ts):
             )
             atm_iv = nearest.get("mark_iv")
 
-        # 25-delta skew: avg put IV - avg call IV for instruments near 25 delta
-        puts_25d = [
-            i["mark_iv"] for i in instruments
-            if i["option_type"] == "put"
-            and i.get("delta") is not None
-            and 0.2 <= abs(i["delta"]) <= 0.3
-            and i.get("mark_iv")
-        ]
-        calls_25d = [
-            i["mark_iv"] for i in instruments
-            if i["option_type"] == "call"
-            and i.get("delta") is not None
-            and 0.2 <= abs(i["delta"]) <= 0.3
-            and i.get("mark_iv")
-        ]
+        # 25-delta skew: avg put IV - avg call IV
+        # Use delta if available (from greeks sub-object or top-level),
+        # fall back to moneyness proxy (puts 90-97% of spot, calls 103-110%)
         skew_25d = None
-        if puts_25d and calls_25d:
-            skew_25d = round(
-                sum(puts_25d) / len(puts_25d) - sum(calls_25d) / len(calls_25d), 4
-            )
+        if underlying:
+            def _delta(i):
+                d = i.get("delta")
+                if d is None and isinstance(i.get("greeks"), dict):
+                    d = i["greeks"].get("delta")
+                return d
+
+            def _near_25d_by_delta(i, opt_type):
+                d = _delta(i)
+                return (d is not None and i["option_type"] == opt_type
+                        and 0.2 <= abs(d) <= 0.3 and i.get("mark_iv"))
+
+            def _near_25d_by_moneyness(i, opt_type):
+                if i["option_type"] != opt_type or not i.get("mark_iv") or not i["strike"]:
+                    return False
+                ratio = i["strike"] / underlying
+                return (0.90 <= ratio <= 0.97) if opt_type == "put" else (1.03 <= ratio <= 1.10)
+
+            use_moneyness = not any(_delta(i) is not None for i in instruments)
+            _filter = _near_25d_by_moneyness if use_moneyness else _near_25d_by_delta
+
+            puts_25d  = [i["mark_iv"] for i in instruments if _filter(i, "put")]
+            calls_25d = [i["mark_iv"] for i in instruments if _filter(i, "call")]
+            if puts_25d and calls_25d:
+                skew_25d = round(
+                    sum(puts_25d) / len(puts_25d) - sum(calls_25d) / len(calls_25d), 4
+                )
 
         # Put/call OI ratio
         put_oi = sum(i["open_interest"] or 0 for i in instruments if i["option_type"] == "put")
