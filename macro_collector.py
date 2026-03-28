@@ -53,11 +53,11 @@ def backfill_macro(days_back=90):
         try:
             latest = get_latest_macro_ts(symbol)
             if latest:
-                # Resume from day after latest stored
-                start_date = latest + timedelta(days=1)
-                if start_date >= end_date:
-                    log.info(f"Macro {symbol}: already up to date")
+                # Skip if data is fresh (within 3 days covers weekends + same-day redeploys)
+                if (date.today() - latest).days <= 3:
+                    log.info(f"Macro {symbol}: already up to date ({latest})")
                     continue
+                start_date = latest + timedelta(days=1)
             else:
                 start_date = date.today() - timedelta(days=days_back)
 
