@@ -116,6 +116,59 @@ CREATE TABLE IF NOT EXISTS shadow_balance (
     balance NUMERIC(10,2) NOT NULL,
     event   TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS deribit_options (
+    id               BIGSERIAL PRIMARY KEY,
+    ts               TIMESTAMPTZ NOT NULL,
+    currency         TEXT NOT NULL,
+    instrument_name  TEXT NOT NULL,
+    expiry_ts        TIMESTAMPTZ NOT NULL,
+    strike           NUMERIC(14,2) NOT NULL,
+    option_type      TEXT NOT NULL,
+    mark_iv          NUMERIC(8,4),
+    bid_iv           NUMERIC(8,4),
+    ask_iv           NUMERIC(8,4),
+    delta            NUMERIC(10,6),
+    gamma            NUMERIC(14,10),
+    vega             NUMERIC(14,6),
+    theta            NUMERIC(14,6),
+    open_interest    NUMERIC(20,2),
+    volume           NUMERIC(20,2),
+    mark_price       NUMERIC(14,6),
+    underlying_price NUMERIC(14,2),
+    UNIQUE (instrument_name, ts)
+);
+
+CREATE TABLE IF NOT EXISTS deribit_surface (
+    id           BIGSERIAL PRIMARY KEY,
+    ts           TIMESTAMPTZ NOT NULL,
+    currency     TEXT NOT NULL,
+    expiry_ts    TIMESTAMPTZ NOT NULL,
+    days_to_exp  NUMERIC(8,2),
+    atm_iv       NUMERIC(8,4),
+    skew_25d     NUMERIC(8,4),
+    pc_oi_ratio  NUMERIC(8,4),
+    total_oi     NUMERIC(20,2),
+    total_volume NUMERIC(20,2),
+    UNIQUE (currency, expiry_ts, ts)
+);
+
+CREATE TABLE IF NOT EXISTS macro_daily (
+    id      BIGSERIAL PRIMARY KEY,
+    ts      DATE NOT NULL,
+    symbol  TEXT NOT NULL,
+    open    NUMERIC(14,4),
+    high    NUMERIC(14,4),
+    low     NUMERIC(14,4),
+    close   NUMERIC(14,4) NOT NULL,
+    volume  NUMERIC(20,0),
+    UNIQUE (symbol, ts)
+);
+
+CREATE INDEX IF NOT EXISTS idx_deribit_options_lookup ON deribit_options(currency, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_deribit_options_expiry ON deribit_options(currency, expiry_ts, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_deribit_surface_lookup ON deribit_surface(currency, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_macro_daily_lookup ON macro_daily(symbol, ts DESC);
 """
 
 
@@ -427,3 +480,88 @@ def get_full_dataset(product, granularity):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
+
+
+def upsert_deribit_options(rows):
+    if not rows:
+        return
+    conn = get_conn()
+    cur = conn.cursor()
+    execute_values(cur, """
+        INSERT INTO deribit_options
+            (ts, currency, instrument_name, expiry_ts, strike, option_type,
+             mark_iv, bid_iv, ask_iv, delta, gamma, vega, theta,
+             open_interest, volume, mark_price, underlying_price)
+        VALUES %s
+        ON CONFLICT (instrument_name, ts)
+        DO UPDATE SET mark_iv=EXCLUDED.mark_iv, bid_iv=EXCLUDED.bid_iv,
+                      ask_iv=EXCLUDED.ask_iv, delta=EXCLUDED.delta,
+                      gamma=EXCLUDED.gamma, vega=EXCLUDED.vega,
+                      theta=EXCLUDED.theta, open_interest=EXCLUDED.open_interest,
+                      volume=EXCLUDED.volume, mark_price=EXCLUDED.mark_price,
+                      underlying_price=EXCLUDED.underlying_price
+    """, [(
+        r["ts"], r["currency"], r["instrument_name"], r["expiry_ts"],
+        r["strike"], r["option_type"],
+        r.get("mark_iv"), r.get("bid_iv"), r.get("ask_iv"),
+        r.get("delta"), r.get("gamma"), r.get("vega"), r.get("theta"),
+        r.get("open_interest"), r.get("volume"),
+        r.get("mark_price"), r.get("underlying_price"),
+    ) for r in rows])
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def upsert_deribit_surface(rows):
+    if not rows:
+        return
+    conn = get_conn()
+    cur = conn.cursor()
+    execute_values(cur, """
+        INSERT INTO deribit_surface
+            (ts, currency, expiry_ts, days_to_exp, atm_iv, skew_25d,
+             pc_oi_ratio, total_oi, total_volume)
+        VALUES %s
+        ON CONFLICT (currency, expiry_ts, ts)
+        DO UPDATE SET days_to_exp=EXCLUDED.days_to_exp, atm_iv=EXCLUDED.atm_iv,
+                      skew_25d=EXCLUDED.skew_25d, pc_oi_ratio=EXCLUDED.pc_oi_ratio,
+                      total_oi=EXCLUDED.total_oi, total_volume=EXCLUDED.total_volume
+    """, [(
+        r["ts"], r["currency"], r["expiry_ts"], r.get("days_to_exp"),
+        r.get("atm_iv"), r.get("skew_25d"), r.get("pc_oi_ratio"),
+        r.get("total_oi"), r.get("total_volume"),
+    ) for r in rows])
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def upsert_macro_daily(rows):
+    if not rows:
+        return
+    conn = get_conn()
+    cur = conn.cursor()
+    execute_values(cur, """
+        INSERT INTO macro_daily (ts, symbol, open, high, low, close, volume)
+        VALUES %s
+        ON CONFLICT (symbol, ts)
+        DO UPDATE SET open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low,
+                      close=EXCLUDED.close, volume=EXCLUDED.volume
+    """, [(
+        r["ts"], r["symbol"],
+        r.get("open"), r.get("high"), r.get("low"), r["close"], r.get("volume"),
+    ) for r in rows])
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def get_latest_macro_ts(symbol):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT MAX(ts) FROM macro_daily WHERE symbol = %s", (symbol,))
+    result = cur.fetchone()[0]
+    cur.close()
+    conn.close()
+    return result

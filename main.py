@@ -10,6 +10,8 @@ from indicators import compute_and_store
 from backtester import run_all_backtests, run_param_sweep
 from discord_bot import send_startup_message, send_backtest_summary, send_trade_breakdown, send_shadow_checkin, send_weekly_report, start_discord_listener
 from shadow_trader import evaluate_shadow_trades
+from deribit_collector import collect_deribit_options
+from macro_collector import backfill_macro, collect_macro_daily
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,6 +41,20 @@ def ohlcv_1hour_job():
         evaluate_shadow_trades("1hour")
     except Exception as e:
         log.error(f"1-hour shadow trade evaluation failed: {e}")
+
+
+def deribit_15min_job():
+    try:
+        collect_deribit_options()
+    except Exception as e:
+        log.error(f"Deribit 15-min job failed: {e}")
+
+
+def macro_daily_job():
+    try:
+        collect_macro_daily()
+    except Exception as e:
+        log.error(f"Macro daily job failed: {e}")
 
 
 def shadow_checkin_job():
@@ -103,6 +119,18 @@ def main():
 
     # 2. Backfill 30 days of historical OHLCV data
     run_backfill_all(days_back=30)
+
+    # 2b. Backfill 90 days of macro data (SPY/QQQ/VIX)
+    try:
+        backfill_macro(days_back=90)
+    except Exception as e:
+        log.warning(f"Macro backfill failed: {e}")
+
+    # 2c. Initial Deribit options snapshot
+    try:
+        collect_deribit_options()
+    except Exception as e:
+        log.warning(f"Initial Deribit collection failed: {e}")
 
     # 3. Aggregate daily candles from hourly data
     aggregate_daily_candles()
@@ -190,11 +218,32 @@ def main():
         max_instances=1,
         misfire_grace_time=3600,
     )
+    # Deribit options: every 15 minutes
+    scheduler.add_job(
+        deribit_15min_job,
+        "interval",
+        minutes=15,
+        id="deribit_15min",
+        max_instances=1,
+        misfire_grace_time=120,
+    )
+    # Macro daily: 06:15 UTC (after daily backtest at 06:00)
+    scheduler.add_job(
+        macro_daily_job,
+        "cron",
+        hour=6,
+        minute=15,
+        id="macro_daily",
+        max_instances=1,
+        misfire_grace_time=3600,
+    )
     scheduler.start()
     log.info("OHLCV collection scheduled (5-min + 1-hour)")
     log.info("Daily backtest scheduled (06:00 UTC)")
     log.info("Shadow check-ins scheduled (8am/12pm/4pm/8pm ET)")
     log.info("Weekly report scheduled (Sunday 09:00 UTC)")
+    log.info("Deribit options scheduled (every 15 min)")
+    log.info("Macro daily scheduled (06:15 UTC)")
 
     # 9. Start Discord listener for STOP command
     try:
