@@ -39,37 +39,21 @@ def _send_webhook(embeds):
 
 
 def _send_embed_sync(embeds):
-    """Send embeds using bot token. Falls back to webhook."""
-    if not BOT_TOKEN or not CHANNEL_ID:
-        return _send_webhook(embeds)
-
-    async def _send():
-        intents = discord.Intents.default()
-        client = discord.Client(intents=intents)
-
-        @client.event
-        async def on_ready():
-            try:
-                channel = client.get_channel(_get_channel_id())
-                if not channel:
-                    channel = await client.fetch_channel(_get_channel_id())
-                for embed in embeds:
-                    await channel.send(embed=embed)
-            except Exception as e:
-                log.error(f"Discord send failed: {e}")
-            finally:
-                await client.close()
-
-        await client.start(BOT_TOKEN)
-
-    try:
-        loop = asyncio.new_event_loop()
-        loop.run_until_complete(_send())
-        loop.close()
-        return True
-    except Exception as e:
-        log.error(f"Discord bot send failed: {e}, trying webhook fallback")
-        return _send_webhook(embeds)
+    """Send embeds via Discord REST API. Falls back to webhook."""
+    if BOT_TOKEN and CHANNEL_ID:
+        try:
+            payload = {"embeds": [e.to_dict() for e in embeds]}
+            r = http_requests.post(
+                f"https://discord.com/api/v10/channels/{CHANNEL_ID}/messages",
+                headers={"Authorization": f"Bot {BOT_TOKEN}"},
+                json=payload,
+                timeout=10,
+            )
+            r.raise_for_status()
+            return True
+        except Exception as e:
+            log.error(f"Discord REST send failed: {e}, trying webhook fallback")
+    return _send_webhook(embeds)
 
 
 def send_startup_message():
@@ -231,94 +215,100 @@ def send_shadow_checkin():
     strategy_balances = get_all_strategy_balances()
     all_closed = get_all_closed_shadow_trades()
     open_positions = get_open_shadow_trades()
+    since_ts = datetime.now(timezone.utc) - timedelta(hours=6)
+    recent_closed = get_closed_shadow_trades_since(since_ts)
 
+    num_strategies = len(strategy_balances)
     total_balance = sum(strategy_balances.values()) if strategy_balances else 0
-    num_strategies = len(strategy_balances) if strategy_balances else 0
     initial_total = 100.0 * num_strategies
-
-    # Calculate realized P&L and win/loss
     total_pnl = sum(float(t["pnl_dollars"]) for t in all_closed)
     wins = sum(1 for t in all_closed if float(t["pnl_dollars"]) > 0)
     losses = sum(1 for t in all_closed if float(t["pnl_dollars"]) <= 0)
 
-    # Determine shadow mode start day
-    first_trade_ts = None
-    if all_closed:
-        first_trade_ts = all_closed[0].get("entry_ts")
-    if open_positions and not first_trade_ts:
-        first_trade_ts = open_positions[0].get("entry_ts")
+    # Days running
+    all_trades = all_closed + open_positions
+    first_ts = min((t.get("entry_ts") for t in all_trades if t.get("entry_ts")), default=None)
+    days_running = (datetime.now(timezone.utc) - first_ts).days if first_ts and hasattr(first_ts, "date") else 0
 
-    days_running = 0
-    if first_trade_ts and hasattr(first_trade_ts, 'date'):
-        days_running = (datetime.now(timezone.utc) - first_trade_ts).days
-
-    color = 0x3498DB if total_pnl >= 0 else 0xFF0000
+    color = 0x00AA00 if total_pnl >= 0 else 0xFF4444
     embed = discord.Embed(
         title="Shadow Trading Check-In",
         description=(
-            f"**Total Balance:** ${total_balance:.2f} (${initial_total:.0f} across {num_strategies} strategies) | "
-            f"**Realized P&L:** ${total_pnl:+.2f} | "
-            f"**W/L:** {wins}/{losses}"
+            f"**{num_strategies} strategies** | Portfolio: **${total_balance:.2f}** / ${initial_total:.0f} started\n"
+            f"All-time realized P&L: **${total_pnl:+.2f}** | {wins}W / {losses}L | "
+            f"{len(open_positions)} open now"
         ),
         color=color,
         timestamp=datetime.now(timezone.utc),
     )
 
-    # Open positions with current prices
+    # --- Recent trade pairs (last 6h): entry → exit ---
+    if recent_closed:
+        lines = []
+        for t in recent_closed:
+            entry_p = float(t["entry_price"])
+            exit_p = float(t["exit_price"])
+            pnl = float(t["pnl_dollars"])
+            reason = t["exit_reason"].upper()
+            sign = "+" if pnl >= 0 else ""
+            lines.append(
+                f"`{t['strategy']}`\n"
+                f"  {t['side'].upper()} {t['product']}  "
+                f"${entry_p:,.2f} → ${exit_p:,.2f}  [{reason}]  **{sign}${pnl:.2f}**"
+            )
+        value = "\n".join(lines)
+        if len(value) > 1020:
+            value = value[:1017] + "..."
+        embed.add_field(
+            name=f"Completed Trades — Last 6h ({len(recent_closed)})",
+            value=value, inline=False
+        )
+    else:
+        embed.add_field(name="Completed Trades — Last 6h", value="No trades closed this window", inline=False)
+
+    # --- Open positions snapshot: unrealized P&L total ---
     if open_positions:
-        products = list(set(p["product"] for p in open_positions))
+        products = list({p["product"] for p in open_positions})
         current_prices = get_latest_prices(products)
+        total_unrealized = 0.0
         lines = []
         for pos in open_positions:
             curr_price = current_prices.get(pos["product"], float(pos["entry_price"]))
             entry_p = float(pos["entry_price"])
             size = float(pos["position_size"])
-            unrealized_pct = (curr_price - entry_p) / entry_p
-            unrealized_dollars = size * unrealized_pct
+            if pos["side"] == "long":
+                unreal_pct = (curr_price - entry_p) / entry_p
+            else:
+                unreal_pct = (entry_p - curr_price) / entry_p
+            unreal_dollars = size * unreal_pct
+            total_unrealized += unreal_dollars
+            sign = "+" if unreal_dollars >= 0 else ""
             lines.append(
-                f"**{pos['strategy']}** | {pos['product']} {pos['side']} @ ${entry_p:,.2f}\n"
-                f"  Now: ${curr_price:,.2f} | ${unrealized_dollars:+.2f} ({unrealized_pct*100:+.2f}%)"
+                f"`{pos['strategy']}`  {pos['side'].upper()} {pos['product']} "
+                f"@ ${entry_p:,.2f}  →  ${curr_price:,.2f}  **{sign}${unreal_dollars:.2f}**"
             )
-        embed.add_field(name=f"Open Positions ({len(open_positions)})",
-                        value="\n".join(lines), inline=False)
-    else:
-        embed.add_field(name="Open Positions", value="None", inline=False)
+        value = "\n".join(lines)
+        if len(value) > 1020:
+            value = value[:1017] + "..."
+        sign = "+" if total_unrealized >= 0 else ""
+        embed.add_field(
+            name=f"Open Positions ({len(open_positions)})  unrealized {sign}${total_unrealized:.2f}",
+            value=value, inline=False
+        )
 
-    # Closed since last check-in (6 hours ago)
-    since_ts = datetime.now(timezone.utc) - timedelta(hours=6)
-    recent_closed = get_closed_shadow_trades_since(since_ts)
-    if recent_closed:
-        lines = []
-        for t in recent_closed:
-            lines.append(
-                f"**{t['strategy']}** | {t['exit_reason']} @ ${float(t['exit_price']):,.2f} | "
-                f"${float(t['pnl_dollars']):+.2f} ({float(t['pnl_pct']):+.2f}%)"
-            )
-        embed.add_field(name=f"Closed Since Last Check-In ({len(recent_closed)})",
-                        value="\n".join(lines), inline=False)
-
-    # Per-strategy stats (balance + cumulative P&L)
-    strat_stats = defaultdict(lambda: {"wins": 0, "losses": 0, "pnl": 0})
-    for t in all_closed:
-        s = strat_stats[t["strategy"]]
-        pnl = float(t["pnl_dollars"])
-        if pnl > 0:
-            s["wins"] += 1
-        else:
-            s["losses"] += 1
-        s["pnl"] += pnl
-
+    # --- Leaderboard: top 5 and bottom 5 by net P&L vs $100 baseline ---
     if strategy_balances:
-        lines = []
-        for name, bal in sorted(strategy_balances.items()):
-            s = strat_stats.get(name, {"wins": 0, "losses": 0, "pnl": 0})
-            lines.append(
-                f"**{name}**: ${bal:.2f} | {s['wins']}W/{s['losses']}L  ${s['pnl']:+.2f}"
-            )
-        embed.add_field(name="Per-Strategy Balance & Stats", value="\n".join(lines), inline=False)
+        ranked = sorted(strategy_balances.items(), key=lambda x: x[1], reverse=True)
+        top5 = ranked[:5]
+        bot5 = ranked[-5:][::-1]
 
-    footer = f"Shadow mode day {days_running}/30 | Go-live trigger: 1 month profitable"
-    embed.set_footer(text=footer)
+        top_lines = [f"`{n}` **${b:.2f}** ({b-100:+.2f})" for n, b in top5]
+        bot_lines = [f"`{n}` **${b:.2f}** ({b-100:+.2f})" for n, b in bot5]
+
+        embed.add_field(name="Top 5 Strategies", value="\n".join(top_lines), inline=True)
+        embed.add_field(name="Bottom 5 Strategies", value="\n".join(bot_lines), inline=True)
+
+    embed.set_footer(text=f"Shadow mode day {days_running}/30 | Go-live trigger: 1 month profitable")
 
     _send_embed_sync([embed])
     log.info("Shadow check-in sent to Discord")
