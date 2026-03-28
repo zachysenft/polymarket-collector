@@ -1,6 +1,5 @@
 import os
 import logging
-import asyncio
 import threading
 from datetime import datetime, timezone
 from collections import defaultdict
@@ -431,9 +430,7 @@ def start_discord_listener():
         os._exit(1)
 
     def _run():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(client.start(BOT_TOKEN))
+        client.run(BOT_TOKEN, log_handler=None)
 
     thread = threading.Thread(target=_run, daemon=True, name="discord-listener")
     thread.start()
