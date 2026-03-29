@@ -1,9 +1,10 @@
 import logging
 import threading
 import time
+from datetime import datetime, timezone
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from db import init_schema
+from db import init_schema, get_latest_backtest_ts
 from price_collector import PriceCollector
 from ohlcv_collector import run_backfill_all, collect_all_products, aggregate_daily_candles, PRODUCTS, GRANULARITIES, GRAN_LABELS
 from indicators import compute_and_store
@@ -146,18 +147,22 @@ def main():
                 log.error(f"Indicator computation failed for {product} {gran_label}: {e}")
     log.info("Indicators computed")
 
-    # 5. Run backtests (default params)
-    bt_results = run_all_backtests()
-
-    # 6. Run parameter sweep (multiple SL/TP/trail configs)
-    sweep_results = run_param_sweep()
-
-    # 6b. Send initial backtest results to Discord
-    try:
-        send_backtest_summary(bt_results, sweep_results)
-        send_trade_breakdown(bt_results)
-    except Exception as e:
-        log.error(f"Discord initial backtest notification failed: {e}")
+    # 5. Run backtests only if no results from the last 23 hours
+    latest_bt = get_latest_backtest_ts()
+    now_utc = datetime.now(timezone.utc)
+    bt_results = []
+    sweep_results = []
+    if latest_bt and (now_utc - latest_bt).total_seconds() < 23 * 3600:
+        log.info(f"Skipping startup backtest — last run was {latest_bt} (< 23h ago)")
+    else:
+        log.info("Running startup backtests...")
+        bt_results = run_all_backtests()
+        sweep_results = run_param_sweep()
+        try:
+            send_backtest_summary(bt_results, sweep_results)
+            send_trade_breakdown(bt_results)
+        except Exception as e:
+            log.error(f"Discord initial backtest notification failed: {e}")
 
     # 7. Start real-time websocket price feed
     collector = PriceCollector(log_interval_seconds=60)
@@ -190,7 +195,7 @@ def main():
     scheduler.add_job(
         daily_backtest_job,
         "cron",
-        hour=6,
+        hour=12,
         minute=0,
         id="daily_backtest",
         max_instances=1,
@@ -227,11 +232,11 @@ def main():
         max_instances=1,
         misfire_grace_time=120,
     )
-    # Macro daily: 06:15 UTC (after daily backtest at 06:00)
+    # Macro daily: 12:15 UTC (after daily backtest at 12:00)
     scheduler.add_job(
         macro_daily_job,
         "cron",
-        hour=6,
+        hour=12,
         minute=15,
         id="macro_daily",
         max_instances=1,
@@ -239,7 +244,7 @@ def main():
     )
     scheduler.start()
     log.info("OHLCV collection scheduled (5-min + 1-hour)")
-    log.info("Daily backtest scheduled (06:00 UTC)")
+    log.info("Daily backtest scheduled (12:00 UTC / 8am EDT)")
     log.info("Shadow check-ins scheduled (8am/12pm/4pm/8pm ET)")
     log.info("Weekly report scheduled (Sunday 09:00 UTC)")
     log.info("Deribit options scheduled (every 15 min)")

@@ -565,3 +565,13 @@ def get_latest_macro_ts(symbol):
     cur.close()
     conn.close()
     return result
+
+
+def get_latest_backtest_ts():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT MAX(run_ts) FROM backtest_results")
+    result = cur.fetchone()[0]
+    cur.close()
+    conn.close()
+    return result
