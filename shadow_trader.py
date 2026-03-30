@@ -5,8 +5,7 @@ from datetime import datetime, timezone
 from db import (
     get_full_dataset, get_open_shadow_trades,
     get_all_strategy_balances, insert_shadow_trade, close_shadow_trade,
-    update_peak_price, update_shadow_balance,
-    get_poor_backtest_combinations, get_macro_context,
+    update_peak_price, update_shadow_balance, get_macro_context,
 )
 
 log = logging.getLogger(__name__)
@@ -33,12 +32,8 @@ _STRATEGY_TEMPLATES = [
     ("RSI Dip",    "_check_entry_rsi_dip_trend",      "_check_exit_rsi_dip_trend",      ["1hour", "1day"],      ["Long"]),
 ]
 
-# Maps backtester strategy names → shadow template labels (for pruning poor combos)
-BACKTEST_TO_SHADOW_LABELS = {
-    "MACD+RSI Filtered": ["MACD+RSI", "MACD+VIX"],
-    "RSI Momentum":      ["RSI Mom",  "RSI Dip"],
-    "MACD Crossover":    ["MACD Cross", "MACD+200d"],
-}
+# Strategies with shadow balance below this threshold get new entries paused
+PRUNE_THRESHOLD = INITIAL_BALANCE * 0.92  # down 8% from $100 start
 
 
 def _build_strategies():
@@ -331,21 +326,10 @@ def evaluate_shadow_trades(granularity):
     all_balances = get_all_strategy_balances()
     closed_ids = set()
 
-    # Prune entries for strategy combos where latest backtest total_return < -10%
-    try:
-        poor_combos = get_poor_backtest_combinations(threshold_pct=-10.0)
-    except Exception as e:
-        log.warning(f"Could not fetch backtest performance for pruning: {e}")
-        poor_combos = set()
-    paused_strategies = set()
-    for product, granularity_bt, bt_strat_name in poor_combos:
-        for shadow_label in BACKTEST_TO_SHADOW_LABELS.get(bt_strat_name, []):
-            asset_label = next((a for a, p in _ASSETS if p == product), None)
-            if asset_label:
-                for side in ["Long", "Short", "Combo"]:
-                    paused_strategies.add(f"{asset_label} {shadow_label} {side} {granularity_bt}")
+    # Pause new entries for any strategy whose live shadow balance has dropped > 8%
+    paused_strategies = {k for k, v in all_balances.items() if v < PRUNE_THRESHOLD}
     if paused_strategies:
-        log.info(f"Shadow: {len(paused_strategies)} strategy variants paused (backtest total_return < -10%)")
+        log.info(f"Shadow: {len(paused_strategies)} strategies paused (balance < ${PRUNE_THRESHOLD:.0f})")
 
     # --- PHASE 1: Check exits on open positions (this granularity only) ---
     for pos in open_positions:

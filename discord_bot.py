@@ -295,17 +295,23 @@ def send_shadow_checkin():
             value=value, inline=False
         )
 
-    # --- Leaderboard: top 5 and bottom 5 by net P&L vs $100 baseline ---
+    # --- Leaderboard: top 5 and bottom 5 by P&L ---
     if strategy_balances:
         ranked = sorted(strategy_balances.items(), key=lambda x: x[1], reverse=True)
         top5 = ranked[:5]
-        bot5 = ranked[-5:][::-1]
+        bot5 = [r for r in ranked[-5:][::-1] if r[1] < 100.0]  # only show actual losers
 
-        top_lines = [f"`{n}` **${b:.2f}** ({b-100:+.2f})" for n, b in top5]
-        bot_lines = [f"`{n}` **${b:.2f}** ({b-100:+.2f})" for n, b in bot5]
+        def _fmt(n, b):
+            # Shorten "BTC MACD+RSI Long 1hour" → "BTC MACD+RSI L 1h"
+            short = n.replace("Long", "L").replace("Short", "S").replace("Combo", "C")
+            short = short.replace("1hour", "1h").replace("5min", "5m").replace("1day", "1d")
+            pnl = b - 100
+            sign = "+" if pnl >= 0 else ""
+            return f"`{short}` {sign}${pnl:.2f}"
 
-        embed.add_field(name="Top 5 Strategies", value="\n".join(top_lines), inline=True)
-        embed.add_field(name="Bottom 5 Strategies", value="\n".join(bot_lines), inline=True)
+        embed.add_field(name="🏆 Top 5", value="\n".join(_fmt(n, b) for n, b in top5), inline=True)
+        if bot5:
+            embed.add_field(name="📉 Bottom 5", value="\n".join(_fmt(n, b) for n, b in bot5), inline=True)
 
     embed.set_footer(text=f"Shadow mode day {days_running}/30 | Go-live trigger: 1 month profitable")
 
