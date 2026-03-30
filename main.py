@@ -12,7 +12,7 @@ from backtester import run_all_backtests, run_param_sweep
 from discord_bot import send_startup_message, send_backtest_summary, send_trade_breakdown, send_shadow_checkin, send_weekly_report, start_discord_listener
 from shadow_trader import evaluate_shadow_trades
 from deribit_collector import collect_deribit_options
-from macro_collector import backfill_macro, collect_macro_daily
+from macro_collector import backfill_macro, collect_macro_daily, check_vix_regime_change
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,6 +56,10 @@ def macro_daily_job():
         collect_macro_daily()
     except Exception as e:
         log.error(f"Macro daily job failed: {e}")
+    try:
+        check_vix_regime_change()
+    except Exception as e:
+        log.error(f"VIX regime check failed: {e}")
 
 
 def shadow_checkin_job():

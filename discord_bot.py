@@ -202,6 +202,31 @@ def send_trade_breakdown(bt_results):
     log.info("Trade breakdown sent to Discord")
 
 
+def send_regime_alert(vix_now, vix_prev):
+    """Send a Discord alert when VIX crosses the 25 threshold in either direction."""
+    if not BOT_TOKEN and not WEBHOOK_URL:
+        return
+    crossed_up = vix_prev < 25 and vix_now >= 25
+    crossed_down = vix_prev >= 25 and vix_now < 25
+    if not crossed_up and not crossed_down:
+        return
+    if crossed_down:
+        title = "✅ Regime Change: Fear Subsiding"
+        desc = (f"VIX dropped below 25 ({vix_prev:.1f} → **{vix_now:.1f}**)\n"
+                f"MACD+VIX entries now **active** — regime-filtered strategies live.")
+        color = 0x00AA00
+    else:
+        title = "⚠️ Regime Change: Fear Spike"
+        desc = (f"VIX crossed above 25 ({vix_prev:.1f} → **{vix_now:.1f}**)\n"
+                f"MACD+VIX entries **paused** — waiting for fear to subside.")
+        color = 0xFF8800
+    embed = discord.Embed(title=title, description=desc, color=color,
+                          timestamp=datetime.now(timezone.utc))
+    embed.set_footer(text="VIX threshold: 25 | checked daily at 12:15 UTC")
+    _send_embed_sync([embed])
+    log.info(f"Regime alert sent: VIX {vix_prev:.1f} → {vix_now:.1f}")
+
+
 def send_shadow_checkin():
     """Send 4x daily shadow trading status update."""
     if not BOT_TOKEN and not WEBHOOK_URL:

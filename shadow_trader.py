@@ -454,6 +454,7 @@ def evaluate_shadow_trades(granularity):
                 "entry_macd_hist": float(curr["macd_hist"]) if not pd.isna(curr.get("macd_hist")) else None,
                 "entry_adx": float(curr["adx_14"]) if not pd.isna(curr.get("adx_14")) else None,
                 "entry_atr": float(curr["atr_14"]) if not pd.isna(curr.get("atr_14")) else None,
+                "entry_vix": round(float(trade_ctx["vix"]), 2) if trade_ctx.get("vix") is not None else None,
             })
             sl_price = entry_price * (1 - SHADOW_RISK_PARAMS["sl_pct"]) if trade_side == "long" else entry_price * (1 + SHADOW_RISK_PARAMS["sl_pct"])
             tp_price = entry_price * (1 + SHADOW_RISK_PARAMS["tp_pct"]) if trade_side == "long" else entry_price * (1 - SHADOW_RISK_PARAMS["tp_pct"])

@@ -90,3 +90,27 @@ def collect_macro_daily():
             log.error(f"Macro daily collection failed for {symbol}: {e}")
 
     log.info(f"Macro daily collection complete — {total} rows upserted")
+
+
+def check_vix_regime_change():
+    """Check if VIX crossed the 25 threshold since yesterday. Send Discord alert if so."""
+    from db import get_conn
+    from discord_bot import send_regime_alert
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT close FROM macro_daily
+            WHERE symbol = '^VIX'
+            ORDER BY ts DESC LIMIT 2
+        """)
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        if len(rows) < 2:
+            return
+        vix_today = float(rows[0][0])
+        vix_yesterday = float(rows[1][0])
+        send_regime_alert(vix_today, vix_yesterday)
+    except Exception as e:
+        log.error(f"VIX regime check failed: {e}")

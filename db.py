@@ -80,6 +80,7 @@ DO $$ BEGIN
     ALTER TABLE indicators ADD COLUMN IF NOT EXISTS stoch_rsi NUMERIC(8,4);
     ALTER TABLE indicators ADD COLUMN IF NOT EXISTS vwap NUMERIC(14,4);
     ALTER TABLE shadow_balance ADD COLUMN IF NOT EXISTS strategy TEXT;
+    ALTER TABLE shadow_trades ADD COLUMN IF NOT EXISTS entry_vix NUMERIC(8,4);
 END $$;
 
 CREATE TABLE IF NOT EXISTS shadow_trades (
@@ -324,15 +325,16 @@ def insert_shadow_trade(trade):
         INSERT INTO shadow_trades
             (strategy, product, side, status, entry_ts, entry_price,
              position_size, peak_price, sl_pct, tp_pct, trail_pct,
-             entry_rsi, entry_macd_hist, entry_adx, entry_atr, notes)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             entry_rsi, entry_macd_hist, entry_adx, entry_atr, entry_vix, notes)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
     """, (
         trade["strategy"], trade["product"], trade["side"], trade["status"],
         trade["entry_ts"], trade["entry_price"], trade["position_size"],
         trade["peak_price"], trade["sl_pct"], trade["tp_pct"], trade["trail_pct"],
         trade.get("entry_rsi"), trade.get("entry_macd_hist"),
-        trade.get("entry_adx"), trade.get("entry_atr"), trade.get("notes"),
+        trade.get("entry_adx"), trade.get("entry_atr"),
+        trade.get("entry_vix"), trade.get("notes"),
     ))
     trade_id = cur.fetchone()[0]
     conn.commit()
