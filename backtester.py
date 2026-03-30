@@ -429,10 +429,51 @@ def strategy_bb_mean_revert_short(df, product, risk_params=None):
     return _calc_returns(trades)
 
 
+def strategy_rsi_dip_trend(df, product, risk_params=None):
+    """
+    RSI mean reversion in uptrend (Connors-style):
+    Enter when RSI bounces off the 30-40 oversold zone while price is above EMA 50.
+    Exit when RSI reaches 60 (momentum fading) or SL/TP/trail.
+    """
+    trades = []
+    in_trade = False
+    entry_price = 0
+    peak_price = 0
+    prev_rsi = None
+
+    for _, row in df.iterrows():
+        rsi = row["rsi_14"]
+        ema50 = row["ema_50"]
+        if pd.isna(rsi) or pd.isna(ema50):
+            prev_rsi = None
+            continue
+
+        if in_trade:
+            peak_price = max(peak_price, row["close"])
+            should_exit, reason = _check_risk_exit(row, entry_price, peak_price, product, params_override=risk_params)
+            if should_exit:
+                trades.append((entry_price, row["close"], reason))
+                in_trade = False
+                prev_rsi = rsi
+                continue
+            if rsi > 60:
+                trades.append((entry_price, row["close"], "signal"))
+                in_trade = False
+        elif prev_rsi is not None and prev_rsi < 40 and rsi >= 40 and row["close"] > ema50:
+            entry_price = row["close"]
+            peak_price = row["close"]
+            in_trade = True
+
+        prev_rsi = rsi
+
+    return _calc_returns(trades)
+
+
 STRATEGIES = {
     "RSI Oversold Buy":      strategy_rsi_oversold,
     "RSI Overbought Short":  strategy_rsi_overbought,
     "RSI Momentum":          strategy_rsi_momentum,
+    "RSI Dip in Trend":      strategy_rsi_dip_trend,
     "MACD Crossover":        strategy_macd_crossover,
     "MACD+RSI Filtered":     strategy_macd_rsi_filtered,
     "BB Bounce":             strategy_bb_bounce,

@@ -575,3 +575,51 @@ def get_latest_backtest_ts():
     cur.close()
     conn.close()
     return result
+
+
+def get_poor_backtest_combinations(threshold_pct=-10.0):
+    """Return set of (product, granularity, strategy_name) from the latest backtest run
+    where total_return < threshold_pct. Used to prune shadow strategies."""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT product, granularity, strategy
+        FROM backtest_results
+        WHERE run_ts = (SELECT MAX(run_ts) FROM backtest_results)
+          AND total_return < %s
+    """, (threshold_pct,))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return {(r[0], r[1], r[2]) for r in rows}
+
+
+def get_macro_context(products):
+    """Fetch latest VIX and 1day EMA 200 per product for regime filters.
+    Returns {"vix": float|None, "ema200": {product: {"ema200": float, "close": float}}}.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT close FROM macro_daily WHERE symbol = '^VIX' ORDER BY ts DESC LIMIT 1"
+    )
+    row = cur.fetchone()
+    vix = float(row[0]) if row else None
+
+    ema200 = {}
+    for product in products:
+        cur.execute("""
+            SELECT i.ema_200, o.close
+            FROM indicators i
+            JOIN ohlcv o ON i.product = o.product AND i.ts = o.ts AND i.granularity = o.granularity
+            WHERE i.product = %s AND i.granularity = '1day' AND i.ema_200 IS NOT NULL
+            ORDER BY i.ts DESC LIMIT 1
+        """, (product,))
+        row = cur.fetchone()
+        if row:
+            ema200[product] = {"ema200": float(row[0]), "close": float(row[1])}
+
+    cur.close()
+    conn.close()
+    return {"vix": vix, "ema200": ema200}
