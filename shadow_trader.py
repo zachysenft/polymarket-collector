@@ -32,10 +32,6 @@ _STRATEGY_TEMPLATES = [
     ("RSI Dip",    "_check_entry_rsi_dip_trend",      "_check_exit_rsi_dip_trend",      ["1hour", "1day"],      ["Long"]),
 ]
 
-# Strategies with shadow balance below this threshold get new entries paused
-PRUNE_THRESHOLD = INITIAL_BALANCE * 0.92  # down 8% from $100 start
-
-
 def _build_strategies():
     strategies = {}
     for label, entry, exit_, allowed_grans, allowed_sides in _STRATEGY_TEMPLATES:
@@ -63,6 +59,7 @@ INITIAL_BALANCE = 100.0
 POSITION_SIZE_PCT = 0.10   # 10% per trade of each strategy's own balance
 MAX_EXPOSURE_PCT = 0.50    # 50% cap per strategy
 ROUND_TRIP_FEE = 0.0002    # 0.02% matching backtester
+PRUNE_THRESHOLD = INITIAL_BALANCE * 0.92  # pause new entries when balance < $92
 
 
 # --- Signal Detection (extracted from backtester.py strategy logic) ---
