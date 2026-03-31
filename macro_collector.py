@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import timedelta, date
 
 import requests as _requests
@@ -22,9 +23,19 @@ _SESSION.headers.update({
 
 
 def _fetch_symbol(symbol, start_date, end_date):
-    """Fetch daily OHLCV for a symbol between start and end dates."""
-    ticker = yf.Ticker(symbol, session=_SESSION)
-    hist = ticker.history(start=start_date.isoformat(), end=end_date.isoformat())
+    """Fetch daily OHLCV for a symbol between start and end dates. Retries on rate limit."""
+    for attempt in range(3):
+        try:
+            ticker = yf.Ticker(symbol, session=_SESSION)
+            hist = ticker.history(start=start_date.isoformat(), end=end_date.isoformat())
+            break
+        except Exception as e:
+            if attempt < 2:
+                wait = 5 * (2 ** attempt)  # 5s, 10s
+                log.warning(f"Macro {symbol}: fetch error ({e}), retrying in {wait}s...")
+                time.sleep(wait)
+            else:
+                raise
     if hist.empty:
         return []
     rows = []
@@ -49,7 +60,9 @@ def backfill_macro(days_back=90):
     end_date = date.today() + timedelta(days=1)  # inclusive of today
     total = 0
 
-    for symbol in SYMBOLS:
+    for i, symbol in enumerate(SYMBOLS):
+        if i > 0:
+            time.sleep(3)
         try:
             latest = get_latest_macro_ts(symbol)
             if latest:
@@ -80,7 +93,9 @@ def collect_macro_daily():
     start_date = date.today() - timedelta(days=5)
     total = 0
 
-    for symbol in SYMBOLS:
+    for i, symbol in enumerate(SYMBOLS):
+        if i > 0:
+            time.sleep(3)
         try:
             rows = _fetch_symbol(symbol, start_date, end_date)
             if rows:
