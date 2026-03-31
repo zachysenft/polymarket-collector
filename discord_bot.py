@@ -72,7 +72,7 @@ def send_startup_message():
         ),
         color=0x00FF00,
     )
-    embed.set_footer(text="Daily backtest at 06:00 UTC | Type STOP to suspend")
+    embed.set_footer(text="Daily backtest at 12:00 UTC | Type STOP to suspend")
     _send_embed_sync([embed])
     log.info("Startup message sent to Discord")
 
@@ -144,7 +144,7 @@ def send_backtest_summary(bt_results, sweep_results):
         parts = [f"**{label}**: {count}" for label, count in sorted(label_wins.items(), key=lambda x: -x[1])]
         embed.add_field(name="Param Win Count", value=" | ".join(parts), inline=False)
 
-    embed.set_footer(text="Next run: tomorrow 06:00 UTC")
+    embed.set_footer(text="Next run: tomorrow 12:00 UTC")
 
     _send_embed_sync([embed])
     log.info("Backtest summary sent to Discord")
@@ -251,6 +251,8 @@ def send_shadow_checkin():
     total_pnl = sum(float(t["pnl_dollars"]) for t in all_closed)
     wins = sum(1 for t in all_closed if float(t["pnl_dollars"]) > 0)
     losses = sum(1 for t in all_closed if float(t["pnl_dollars"]) <= 0)
+    total_trades = wins + losses
+    win_pct = f" ({wins/total_trades*100:.1f}%)" if total_trades > 0 else ""
 
     # Days running
     all_trades = all_closed + open_positions
@@ -262,66 +264,93 @@ def send_shadow_checkin():
         title="Shadow Trading Check-In",
         description=(
             f"**{num_strategies} strategies** | Portfolio: **${total_balance:.2f}** / ${initial_total:.0f} started\n"
-            f"All-time realized P&L: **${total_pnl:+.2f}** | {wins}W / {losses}L | "
+            f"All-time realized P&L: **${total_pnl:+.2f}** | {wins}W / {losses}L{win_pct} | "
             f"{len(open_positions)} open now"
         ),
         color=color,
         timestamp=datetime.now(timezone.utc),
     )
 
-    # --- Recent trade pairs (last 6h): entry → exit ---
+    def _shorten(name):
+        return (name.replace("Long", "L").replace("Short", "S").replace("Combo", "C")
+                    .replace("1hour", "1h").replace("5min", "5m").replace("1day", "1d"))
+
+    def _fmt_trade(t):
+        entry_p = float(t["entry_price"])
+        exit_p = float(t["exit_price"])
+        pnl = float(t["pnl_dollars"])
+        sign = "+" if pnl >= 0 else ""
+        return (f"`{_shorten(t['strategy'])}` {t['side'].upper()} {t['product']} "
+                f"${entry_p:,.0f}→${exit_p:,.0f} [{t['exit_reason'].upper()}] **{sign}${pnl:.2f}**")
+
+    # --- Completed trades: count + top 5 gainers + top 5 losers ---
     if recent_closed:
-        lines = []
-        for t in recent_closed:
-            entry_p = float(t["entry_price"])
-            exit_p = float(t["exit_price"])
-            pnl = float(t["pnl_dollars"])
-            reason = t["exit_reason"].upper()
-            sign = "+" if pnl >= 0 else ""
-            lines.append(
-                f"`{t['strategy']}`\n"
-                f"  {t['side'].upper()} {t['product']}  "
-                f"${entry_p:,.2f} → ${exit_p:,.2f}  [{reason}]  **{sign}${pnl:.2f}**"
-            )
-        value = "\n".join(lines)
-        if len(value) > 1020:
-            value = value[:1017] + "..."
+        sorted_by_pnl = sorted(recent_closed, key=lambda t: float(t["pnl_dollars"]), reverse=True)
+        top5 = sorted_by_pnl[:5]
+        bot5 = sorted_by_pnl[-5:] if len(sorted_by_pnl) > 5 else []
+
         embed.add_field(
             name=f"Completed Trades — Last 6h ({len(recent_closed)})",
-            value=value, inline=False
+            value=f"Top gainers / biggest losers shown below",
+            inline=False,
         )
+        embed.add_field(
+            name="📈 Top 5 Gainers",
+            value="\n".join(_fmt_trade(t) for t in top5) or "—",
+            inline=True,
+        )
+        if bot5:
+            embed.add_field(
+                name="📉 Top 5 Losers",
+                value="\n".join(_fmt_trade(t) for t in reversed(bot5)) or "—",
+                inline=True,
+            )
     else:
         embed.add_field(name="Completed Trades — Last 6h", value="No trades closed this window", inline=False)
 
-    # --- Open positions snapshot: unrealized P&L total ---
+    # --- Open positions: count + unrealized + top 5 winners/losers ---
     if open_positions:
         products = list({p["product"] for p in open_positions})
         current_prices = get_latest_prices(products)
+
+        scored = []
         total_unrealized = 0.0
-        lines = []
         for pos in open_positions:
             curr_price = current_prices.get(pos["product"], float(pos["entry_price"]))
             entry_p = float(pos["entry_price"])
             size = float(pos["position_size"])
             if pos["side"] == "long":
-                unreal_pct = (curr_price - entry_p) / entry_p
+                unreal_dollars = size * (curr_price - entry_p) / entry_p
             else:
-                unreal_pct = (entry_p - curr_price) / entry_p
-            unreal_dollars = size * unreal_pct
+                unreal_dollars = size * (entry_p - curr_price) / entry_p
             total_unrealized += unreal_dollars
-            sign = "+" if unreal_dollars >= 0 else ""
-            lines.append(
-                f"`{pos['strategy']}`  {pos['side'].upper()} {pos['product']} "
-                f"@ ${entry_p:,.2f}  →  ${curr_price:,.2f}  **{sign}${unreal_dollars:.2f}**"
-            )
-        value = "\n".join(lines)
-        if len(value) > 1020:
-            value = value[:1017] + "..."
+            scored.append((pos, curr_price, unreal_dollars))
+
+        scored.sort(key=lambda x: x[2], reverse=True)
         sign = "+" if total_unrealized >= 0 else ""
+
+        def _fmt_open(pos, curr_price, unreal):
+            entry_p = float(pos["entry_price"])
+            s = "+" if unreal >= 0 else ""
+            return (f"`{_shorten(pos['strategy'])}` {pos['side'].upper()} {pos['product']} "
+                    f"${entry_p:,.0f}→${curr_price:,.0f} **{s}${unreal:.2f}**")
+
         embed.add_field(
             name=f"Open Positions ({len(open_positions)})  unrealized {sign}${total_unrealized:.2f}",
-            value=value, inline=False
+            value="Top winners / biggest losers shown below",
+            inline=False,
         )
+        embed.add_field(
+            name="🟢 Top 5 Open Winners",
+            value="\n".join(_fmt_open(*x) for x in scored[:5]) or "—",
+            inline=True,
+        )
+        if len(scored) > 5:
+            embed.add_field(
+                name="🔴 Top 5 Open Losers",
+                value="\n".join(_fmt_open(*x) for x in scored[-5:]) or "—",
+                inline=True,
+            )
 
     # --- Leaderboard: top 5 per timeframe with delta since last check-in ---
     if strategy_balances:
@@ -330,12 +359,10 @@ def send_shadow_checkin():
             elapsed = (datetime.now(timezone.utc) - prev_snapshot_ts).total_seconds() / 3600
             hours_since = round(elapsed, 1)
 
-        def _fmt(n, b):
-            short = n.replace("Long", "L").replace("Short", "S").replace("Combo", "C")
-            short = short.replace("1hour", "1h").replace("5min", "5m").replace("1day", "1d")
+        def _fmt_lb(n, b):
             pnl = b - 100
             sign = "+" if pnl >= 0 else ""
-            line = f"`{short}` {sign}${pnl:.2f}"
+            line = f"`{_shorten(n)}` {sign}${pnl:.2f}"
             if hours_since is not None and n in prev_snapshot:
                 delta = b - prev_snapshot[n]
                 if delta != 0:
@@ -350,8 +377,8 @@ def send_shadow_checkin():
             top5 = sorted(gran_strats, key=lambda x: x[1], reverse=True)[:5]
             embed.add_field(
                 name=f"🏆 Top 5 — {gran_label}",
-                value="\n".join(_fmt(n, b) for n, b in top5),
-                inline=True
+                value="\n".join(_fmt_lb(n, b) for n, b in top5),
+                inline=True,
             )
 
     embed.set_footer(text=f"Shadow mode day {days_running}/30 | Go-live trigger: 1 month profitable")
