@@ -233,10 +233,13 @@ def send_shadow_checkin():
         return
 
     from db import (get_open_shadow_trades, get_closed_shadow_trades_since,
-                    get_all_closed_shadow_trades, get_all_strategy_balances, get_latest_prices)
+                    get_all_closed_shadow_trades, get_all_strategy_balances, get_latest_prices,
+                    get_last_checkin_snapshot, save_checkin_snapshot)
     from datetime import timedelta
 
     strategy_balances = get_all_strategy_balances()
+    prev_snapshot_ts, prev_snapshot = get_last_checkin_snapshot()
+    save_checkin_snapshot(strategy_balances)
     all_closed = get_all_closed_shadow_trades()
     open_positions = get_open_shadow_trades()
     since_ts = datetime.now(timezone.utc) - timedelta(hours=6)
@@ -320,14 +323,25 @@ def send_shadow_checkin():
             value=value, inline=False
         )
 
-    # --- Leaderboard: top 5 per timeframe ---
+    # --- Leaderboard: top 5 per timeframe with delta since last check-in ---
     if strategy_balances:
+        hours_since = None
+        if prev_snapshot_ts:
+            elapsed = (datetime.now(timezone.utc) - prev_snapshot_ts).total_seconds() / 3600
+            hours_since = round(elapsed, 1)
+
         def _fmt(n, b):
             short = n.replace("Long", "L").replace("Short", "S").replace("Combo", "C")
             short = short.replace("1hour", "1h").replace("5min", "5m").replace("1day", "1d")
             pnl = b - 100
             sign = "+" if pnl >= 0 else ""
-            return f"`{short}` {sign}${pnl:.2f}"
+            line = f"`{short}` {sign}${pnl:.2f}"
+            if hours_since is not None and n in prev_snapshot:
+                delta = b - prev_snapshot[n]
+                if delta != 0:
+                    arrow = "↑" if delta > 0 else "↓"
+                    line += f"  {arrow}${abs(delta):.2f} in {hours_since}h"
+            return line
 
         for gran_label, gran_key in [("5m", "5min"), ("1h", "1hour"), ("1d", "1day")]:
             gran_strats = [(n, b) for n, b in strategy_balances.items() if gran_key in n]

@@ -166,6 +166,14 @@ CREATE TABLE IF NOT EXISTS macro_daily (
     UNIQUE (symbol, ts)
 );
 
+CREATE TABLE IF NOT EXISTS shadow_checkin_snapshot (
+    id       BIGSERIAL PRIMARY KEY,
+    ts       TIMESTAMPTZ NOT NULL,
+    strategy TEXT NOT NULL,
+    balance  NUMERIC(10,2) NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_checkin_snapshot_ts ON shadow_checkin_snapshot(ts DESC);
+
 CREATE INDEX IF NOT EXISTS idx_deribit_options_lookup ON deribit_options(currency, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_deribit_options_expiry ON deribit_options(currency, expiry_ts, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_deribit_surface_lookup ON deribit_surface(currency, ts DESC);
@@ -594,6 +602,39 @@ def get_poor_backtest_combinations(threshold_pct=-10.0):
     cur.close()
     conn.close()
     return {(r[0], r[1], r[2]) for r in rows}
+
+
+def save_checkin_snapshot(balances):
+    """Store current strategy balances as a check-in snapshot."""
+    if not balances:
+        return
+    ts = datetime.now(timezone.utc)
+    conn = get_conn()
+    cur = conn.cursor()
+    execute_values(cur,
+        "INSERT INTO shadow_checkin_snapshot (ts, strategy, balance) VALUES %s",
+        [(ts, strategy, balance) for strategy, balance in balances.items()]
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def get_last_checkin_snapshot():
+    """Return (ts, {strategy: balance}) from the most recent prior check-in snapshot."""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT ts, strategy, balance
+        FROM shadow_checkin_snapshot
+        WHERE ts = (SELECT MAX(ts) FROM shadow_checkin_snapshot)
+    """)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    if not rows:
+        return None, {}
+    return rows[0][0], {r[1]: float(r[2]) for r in rows}
 
 
 def get_macro_context(products):
