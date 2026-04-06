@@ -52,6 +52,9 @@ def _build_strategies():
 
 SHADOW_STRATEGIES = _build_strategies()
 
+# Strategy variants excluded from new entries (still managed for exits on existing positions)
+_NO_NEW_ENTRIES = {"Combo"}
+
 # Wide params — best performer from param sweep
 SHADOW_RISK_PARAMS = {"sl_pct": 0.04, "tp_pct": 0.06, "trail_pct": 0.04}
 
@@ -389,8 +392,10 @@ def evaluate_shadow_trades(granularity):
     still_open = [p for p in open_positions if p["id"] not in closed_ids]
 
     for strat_name, config in active_strategies.items():
+        if any(variant in strat_name for variant in _NO_NEW_ENTRIES):
+            continue  # variant paused — existing positions still managed for exits
         if strat_name in paused_strategies:
-            continue  # backtest performance < -10%, skip new entries
+            continue  # balance below threshold, skip new entries
 
         product = config["product"]
         df = _get_df(product)
