@@ -383,8 +383,11 @@ def send_shadow_checkin():
 
     embed.set_footer(text=f"Shadow mode day {days_running}/30 | Go-live trigger: 1 month profitable")
 
-    _send_embed_sync([embed])
-    log.info("Shadow check-in sent to Discord")
+    ok = _send_embed_sync([embed])
+    if ok:
+        log.info("Shadow check-in sent to Discord")
+    else:
+        log.error("Shadow check-in FAILED to send — both REST and webhook unavailable")
 
 
 def send_weekly_report():
