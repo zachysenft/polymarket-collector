@@ -31,7 +31,7 @@ def _fetch_symbol(symbol, start_date, end_date):
             break
         except Exception as e:
             if attempt < 2:
-                wait = 5 * (2 ** attempt)  # 5s, 10s
+                wait = 30 * (2 ** attempt)  # 30s, 60s
                 log.warning(f"Macro {symbol}: fetch error ({e}), retrying in {wait}s...")
                 time.sleep(wait)
             else:
@@ -62,12 +62,13 @@ def backfill_macro(days_back=90):
 
     for i, symbol in enumerate(SYMBOLS):
         if i > 0:
-            time.sleep(3)
+            time.sleep(10)
         try:
             latest = get_latest_macro_ts(symbol)
             if latest:
-                # Skip if data is fresh (within 3 days covers weekends + same-day redeploys)
-                if (date.today() - latest).days <= 3:
+                # Skip if data is within 7 days — daily job at 12:15 UTC handles the gap.
+                # Wide window prevents rate-limit hammering on every redeploy.
+                if (date.today() - latest).days <= 7:
                     log.info(f"Macro {symbol}: already up to date ({latest})")
                     continue
                 start_date = latest + timedelta(days=1)
@@ -95,7 +96,7 @@ def collect_macro_daily():
 
     for i, symbol in enumerate(SYMBOLS):
         if i > 0:
-            time.sleep(3)
+            time.sleep(10)
         try:
             rows = _fetch_symbol(symbol, start_date, end_date)
             if rows:
