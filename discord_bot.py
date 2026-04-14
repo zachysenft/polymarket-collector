@@ -1,5 +1,6 @@
 import os
 import logging
+import time
 import threading
 from datetime import datetime, timezone
 from collections import defaultdict
@@ -23,15 +24,32 @@ def _get_channel_id():
     return None
 
 
+def _post_with_retry(url, headers, payload):
+    """POST to Discord with up to 2 retries, honouring Retry-After on 429."""
+    for attempt in range(3):
+        try:
+            r = http_requests.post(url, headers=headers, json=payload, timeout=10)
+            if r.status_code == 429:
+                retry_after = float(r.json().get("retry_after", 5))
+                log.warning(f"Discord 429 — waiting {retry_after:.1f}s (attempt {attempt + 1}/3)")
+                time.sleep(retry_after)
+                continue
+            r.raise_for_status()
+            return True
+        except Exception as e:
+            if attempt == 2:
+                raise
+            log.warning(f"Discord send error ({e}), retrying...")
+    return False
+
+
 def _send_webhook(embeds):
     """Fallback: send embeds via webhook if bot isn't available."""
     if not WEBHOOK_URL:
         return False
     try:
         payload = {"embeds": [e.to_dict() for e in embeds]}
-        r = http_requests.post(WEBHOOK_URL, json=payload, timeout=10)
-        r.raise_for_status()
-        return True
+        return _post_with_retry(WEBHOOK_URL, {}, payload)
     except Exception as e:
         log.error(f"Webhook send failed: {e}")
         return False
@@ -42,14 +60,11 @@ def _send_embed_sync(embeds):
     if BOT_TOKEN and CHANNEL_ID:
         try:
             payload = {"embeds": [e.to_dict() for e in embeds]}
-            r = http_requests.post(
+            return _post_with_retry(
                 f"https://discord.com/api/v10/channels/{CHANNEL_ID}/messages",
-                headers={"Authorization": f"Bot {BOT_TOKEN}"},
-                json=payload,
-                timeout=10,
+                {"Authorization": f"Bot {BOT_TOKEN}"},
+                payload,
             )
-            r.raise_for_status()
-            return True
         except Exception as e:
             log.error(f"Discord REST send failed: {e}, trying webhook fallback")
     return _send_webhook(embeds)
