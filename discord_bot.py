@@ -73,8 +73,11 @@ def send_startup_message():
         color=0x00FF00,
     )
     embed.set_footer(text="Daily backtest at 12:00 UTC | Type STOP to suspend")
-    _send_embed_sync([embed])
-    log.info("Startup message sent to Discord")
+    ok = _send_embed_sync([embed])
+    if ok:
+        log.info("Startup message sent to Discord")
+    else:
+        log.error("Startup message FAILED to send — both REST and webhook unavailable")
 
 
 def send_backtest_summary(bt_results, sweep_results):
@@ -146,8 +149,11 @@ def send_backtest_summary(bt_results, sweep_results):
 
     embed.set_footer(text="Next run: tomorrow 12:00 UTC")
 
-    _send_embed_sync([embed])
-    log.info("Backtest summary sent to Discord")
+    ok = _send_embed_sync([embed])
+    if ok:
+        log.info("Backtest summary sent to Discord")
+    else:
+        log.error("Backtest summary FAILED to send — both REST and webhook unavailable")
 
 
 def send_trade_breakdown(bt_results):
@@ -198,8 +204,11 @@ def send_trade_breakdown(bt_results):
         if lines:
             embed.add_field(name=product, value="\n".join(lines), inline=False)
 
-    _send_embed_sync([embed])
-    log.info("Trade breakdown sent to Discord")
+    ok = _send_embed_sync([embed])
+    if ok:
+        log.info("Trade breakdown sent to Discord")
+    else:
+        log.error("Trade breakdown FAILED to send — both REST and webhook unavailable")
 
 
 def send_regime_alert(vix_now, vix_prev):
@@ -223,8 +232,11 @@ def send_regime_alert(vix_now, vix_prev):
     embed = discord.Embed(title=title, description=desc, color=color,
                           timestamp=datetime.now(timezone.utc))
     embed.set_footer(text="VIX threshold: 25 | checked daily at 12:15 UTC")
-    _send_embed_sync([embed])
-    log.info(f"Regime alert sent: VIX {vix_prev:.1f} → {vix_now:.1f}")
+    ok = _send_embed_sync([embed])
+    if ok:
+        log.info(f"Regime alert sent: VIX {vix_prev:.1f} → {vix_now:.1f}")
+    else:
+        log.error("Regime alert FAILED to send — both REST and webhook unavailable")
 
 
 def send_shadow_checkin():
@@ -450,8 +462,11 @@ def send_weekly_report():
         embed.add_field(name="Week Trades", value="No trades closed this week", inline=False)
 
     embed.set_footer(text="Weekly summary — every Sunday 09:00 UTC")
-    _send_embed_sync([embed])
-    log.info("Weekly shadow report sent to Discord")
+    ok = _send_embed_sync([embed])
+    if ok:
+        log.info("Weekly shadow report sent to Discord")
+    else:
+        log.error("Weekly shadow report FAILED to send — both REST and webhook unavailable")
 
 
 def start_discord_listener():
