@@ -22,7 +22,7 @@ _ASSETS = [
 _GRANULARITIES = ["5min", "1hour", "1day"]
 _STRATEGY_TEMPLATES = [
     # (label, long_entry, long_exit, allowed_grans, allowed_sides)
-    # None = all granularities / all sides (Long + Short + Combo)
+    # None = all granularities / all sides (Long + Short)
     ("MACD+RSI",   "_check_entry_macd_rsi_filtered", "_check_exit_macd_rsi_filtered",  None,                   None),
     ("RSI Mom",    "_check_entry_rsi_momentum",       "_check_exit_rsi_momentum",       None,                   None),
     ("MACD Cross", "_check_entry_macd_crossover",     "_check_exit_macd_crossover",     None,                   None),
@@ -30,6 +30,10 @@ _STRATEGY_TEMPLATES = [
     ("MACD+VIX",   "_check_entry_macd_rsi_vix",       "_check_exit_macd_rsi_filtered",  ["1hour", "1day"],      ["Long"]),
     ("MACD+200d",  "_check_entry_macd_cross_200d",    "_check_exit_macd_crossover",     ["1hour"],              ["Long"]),
     ("RSI Dip",    "_check_entry_rsi_dip_trend",      "_check_exit_rsi_dip_trend",      ["1hour", "1day"],      ["Long"]),
+    # RSI mean-reversion: go long when RSI dips below 50, exit when it recovers above 55.
+    # Discovered accidentally when Short-variant bug caused longs on bearish RSI signals —
+    # SOL/XRP showed 84%/78% win rates. This codifies that behavior as an intentional strategy.
+    ("RSI Rev",    "_check_entry_rsi_momentum_short", "_check_exit_rsi_momentum_short", ["1hour"],              ["Long"]),
 ]
 
 def _build_strategies():
@@ -38,7 +42,7 @@ def _build_strategies():
         short_entry = entry + "_short"
         short_exit  = exit_ + "_short"
         grans = allowed_grans if allowed_grans is not None else _GRANULARITIES
-        sides = allowed_sides if allowed_sides is not None else ["Long", "Short", "Combo"]
+        sides = allowed_sides if allowed_sides is not None else ["Long", "Short"]
         for asset_label, product in _ASSETS:
             for gran in grans:
                 base = f"{asset_label} {label}"
@@ -46,14 +50,9 @@ def _build_strategies():
                     strategies[f"{base} Long {gran}"]  = {"product": product, "granularity": gran, "entry": entry,       "exit": exit_,       "side": "long"}
                 if "Short" in sides:
                     strategies[f"{base} Short {gran}"] = {"product": product, "granularity": gran, "entry": short_entry, "exit": short_exit,  "side": "short"}
-                if "Combo" in sides:
-                    strategies[f"{base} Combo {gran}"] = {"product": product, "granularity": gran, "entry": entry,       "exit": exit_,       "entry_short": short_entry, "exit_short": short_exit, "side": "both"}
     return strategies
 
 SHADOW_STRATEGIES = _build_strategies()
-
-# Strategy variants excluded from new entries (still managed for exits on existing positions)
-_NO_NEW_ENTRIES = {"Combo"}
 
 # Wide params — best performer from param sweep
 SHADOW_RISK_PARAMS = {"sl_pct": 0.04, "tp_pct": 0.06, "trail_pct": 0.04}
@@ -392,8 +391,6 @@ def evaluate_shadow_trades(granularity):
     still_open = [p for p in open_positions if p["id"] not in closed_ids]
 
     for strat_name, config in active_strategies.items():
-        if any(variant in strat_name for variant in _NO_NEW_ENTRIES):
-            continue  # variant paused — existing positions still managed for exits
         if strat_name in paused_strategies:
             continue  # balance below threshold, skip new entries
 
@@ -407,9 +404,7 @@ def evaluate_shadow_trades(granularity):
         trade_ctx = {**ctx, "product": product}
 
         # Build list of (side, entry_func) signals to check
-        signals_to_check = [("long", ENTRY_FUNCS.get(config["entry"]))]
-        if config["side"] == "both" and config.get("entry_short"):
-            signals_to_check.append(("short", ENTRY_FUNCS.get(config["entry_short"])))
+        signals_to_check = [(config["side"], ENTRY_FUNCS.get(config["entry"]))]
 
         for trade_side, entry_func in signals_to_check:
             if not entry_func or not entry_func(prev, curr, trade_ctx):
